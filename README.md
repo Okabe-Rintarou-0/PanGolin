@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="images/logo.png" width="400px"/>
+  <img src="images/logo.png" width="350px"/>
   <h1>PanGolin</h1>
   <p><b>Make your SJTU cloud disk a local file system.</b></p>
 </div>
