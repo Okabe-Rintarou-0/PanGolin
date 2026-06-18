@@ -12,10 +12,11 @@ func NewHelpCommand() *HelpCommand {
 }
 
 func (h *HelpCommand) Execute(in io.Reader, out io.Writer) error {
- 	helpText := `Available commands:
-   help           Show this help message
-   ls [<path>]    List files and directories
-   clear          Clear the screen
+	helpText := `Available commands:
+  help           Show this help message
+  ls [<path>]    List files and directories
+   cd [<dir>]     Change directory (default: /)
+  clear          Clear the screen
  `
  	helpText += `
  Keybinds:
@@ -24,5 +25,7 @@ func (h *HelpCommand) Execute(in io.Reader, out io.Writer) error {
  `
 
  	_, err := fmt.Fprint(out, helpText)
- 	return err
+	return err
 }
+ 
+ func (h *HelpCommand) Hint(input string) []string { return nil }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"pangolin/pkg/cli"
+	"pangolin/pkg/cmd"
 	"pangolin/pkg/parser"
 	"pangolin/pkg/path"
 	"strings"
@@ -56,15 +57,15 @@ type msgLoginError struct {
 	err string
 }
 
- type msgCheckingSession struct{}
- 
+type msgCheckingSession struct{}
+
 type TUI struct {
-	program    *tea.Program
-	mode       mode
-	loginError string
-	qrContent  string
- 	checkingSession bool
-	jbox       cli.JboxClient
+	program         *tea.Program
+	mode            mode
+	loginError      string
+	qrContent       string
+	checkingSession bool
+	jbox            cli.JboxClient
 
 	info     []string
 	lines    []string
@@ -109,10 +110,10 @@ func (t *TUI) SetProgram(p *tea.Program) {
 
 func (t *TUI) Init() tea.Cmd {
 	go func() {
- 		if t.jbox.HasSession() {
- 			t.program.Send(msgCheckingSession{})
- 		}
- 
+		if t.jbox.HasSession() {
+			t.program.Send(msgCheckingSession{})
+		}
+
 		err := t.jbox.Login(func(qrUrl string) {
 			if t.program != nil {
 				t.program.Send(msgQRReady{url: qrUrl})
@@ -144,7 +145,72 @@ func (t *TUI) promptStr() string {
 	return "🦔 " + t.pathMgr.CurrentPath().Path() + " > "
 }
 
+func (t *TUI) completePath() {
+	inputVal := t.input.Value()
+	if inputVal == "" || strings.Contains(inputVal, "|") {
+		return
+	}
+
+	fields := strings.Fields(inputVal)
+	if len(fields) == 0 {
+		return
+	}
+	cmdName := fields[0]
+	cmdArgs := fields[1:]
+
+	var command cmd.Command
+	switch cmdName {
+	case "cd":
+		command = cmd.NewCdCommand(t.pathMgr, t.jbox, cmdArgs...)
+	default:
+		return
+	}
+
+	hints := command.Hint(inputVal)
+	if len(hints) == 0 {
+		// Show brief feedback even when no completions exist
+		t.lines = append(t.lines, mutedText.Render("  (no completions)"))
+		t.sync()
+		t.viewport.GotoBottom()
+		return
+	}
+
+	partial := strings.Join(cmdArgs, " ")
+	if len(hints) == 1 {
+ 		t.input.SetValue(cmdName + " " + hints[0])
+ 		t.input.CursorEnd()
+ 		return
+ 	}
+	// Multiple matches — try common prefix
+	commonPrefix := longestCommonPrefix(hints)
+	if commonPrefix != partial && commonPrefix != "" {
+ 		t.input.SetValue(cmdName + " " + commonPrefix)
+ 		t.input.CursorEnd()
+ 		return
+ 	}
+
+	// Partial is already the common prefix — show candidates
+	t.lines = append(t.lines, "  "+strings.Join(hints, "  "))
+	t.sync()
+	t.viewport.GotoBottom()
+}
+
+// longestCommonPrefix returns the longest string that is a prefix of all strings in the slice.
+func longestCommonPrefix(strs []string) string {
+	if len(strs) == 0 {
+		return ""
+	}
+	prefix := strs[0]
+	for _, s := range strs[1:] {
+		for len(prefix) > 0 && !strings.HasPrefix(s, prefix) {
+			prefix = prefix[:len(prefix)-1]
+		}
+	}
+	return prefix
+}
+
 func (t *TUI) exec(inputLine string) {
+
 	inputLine = strings.TrimSpace(inputLine)
 	if inputLine == "" {
 		return
@@ -205,24 +271,24 @@ func (t *TUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case msgQRReady:
 		t.qrContent = t.renderQR(msg.url)
- 		t.checkingSession = false
+		t.checkingSession = false
 		return t, nil
 
 	case msgLoginSuccess:
 		t.mode = modeShell
- 		t.info = t.jbox.SessionInfo()
+		t.info = t.jbox.SessionInfo()
 		t.sync()
 		return t, nil
 
 	case msgLoginError:
 		t.loginError = msg.err
- 		t.checkingSession = false
+		t.checkingSession = false
 		return t, nil
 
- 	case msgCheckingSession:
- 		t.checkingSession = true
- 		return t, nil
- 
+	case msgCheckingSession:
+		t.checkingSession = true
+		return t, nil
+
 	case tea.KeyMsg:
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
@@ -231,6 +297,10 @@ func (t *TUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if t.mode == modeShell {
 				t.exec(t.input.Value())
 				t.input.SetValue("")
+			}
+		case tea.KeyTab:
+			if t.mode == modeShell {
+				t.completePath()
 			}
 		}
 
@@ -306,16 +376,16 @@ func (t *TUI) loginView() string {
 	sb.WriteString("\n")
 	sb.WriteString(titleStyle.Render("  🦔 PANGOLIN Login"))
 	sb.WriteString("\n\n")
- 	if !t.checkingSession {
- 		sb.WriteString(accentText.Render("  Scan the QR code with WeChat or SJTU App"))
- 		sb.WriteString("\n\n")
- 	}
+	if !t.checkingSession {
+		sb.WriteString(accentText.Render("  Scan the QR code with WeChat or SJTU App"))
+		sb.WriteString("\n\n")
+	}
 
 	if t.qrContent != "" {
 		sb.WriteString(t.qrContent)
 		sb.WriteString("\n")
- 	} else if t.checkingSession {
- 		sb.WriteString("  " + mutedText.Render("📦 Checking session...") + "\n\n")
+	} else if t.checkingSession {
+		sb.WriteString("  " + mutedText.Render("📦 Checking session...") + "\n\n")
 	} else if t.loginError != "" {
 		sb.WriteString("  " + errorStyle.Render("✖ "+t.loginError) + "\n\n")
 	} else {

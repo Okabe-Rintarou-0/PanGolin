@@ -51,6 +51,8 @@ func (p *PipeParser) Parse(input string) cmd.Command {
 			cmds = append(cmds, cmd.NewHelpCommand())
 		case "ls":
 			cmds = append(cmds, cmd.NewLsCommand(p.jboxCli, p.pathMgr.CurrentPath().Path(), cmdArgs...))
+		case "cd":
+ 			cmds = append(cmds, cmd.NewCdCommand(p.pathMgr, p.jboxCli, cmdArgs...))
 		default:
 		}
 	}

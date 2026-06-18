@@ -1,8 +1,9 @@
 package cmd
 
 import (
- 	"fmt"
- 	"io"
+	"fmt"
+	"io"
+ 	"path"
 	"pangolin/pkg/cli"
  	"sort"
 )
@@ -27,6 +28,10 @@ func (l *LsCommand) Execute(in io.Reader, out io.Writer) error {
 		dirPath = l.currPath
 	} else {
 		dirPath = l.args[0]
+ 		// Resolve . and .. relative to current path
+ 		if dirPath == "." || dirPath == ".." {
+ 			dirPath = path.Join(l.currPath, dirPath)
+ 		}
 	}
 	entries, err := l.cli.List(dirPath)
 	if err != nil {
@@ -62,6 +67,8 @@ func (l *LsCommand) Execute(in io.Reader, out io.Writer) error {
  				return err
  			}
  		}
- 	}
- 	return nil
+	}
+	return nil
 }
+ 
+ func (l *LsCommand) Hint(input string) []string { return nil }
