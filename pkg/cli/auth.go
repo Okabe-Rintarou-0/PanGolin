@@ -10,10 +10,10 @@ import (
 	"net/url"
 	"os"
 	"pangolin/pkg/cli/models"
-	"pangolin/utils"
+	"pangolin/pkg/utils"
 	"path/filepath"
 	"regexp"
- 	"strconv"
+	"strconv"
 	"strings"
 	"time"
 
@@ -57,85 +57,85 @@ func (c *jboxCli) Login(onQRReady func(string)) error {
 		c.session.JAAuthCookie = jaAuthCookie
 		err := c.loginInternal()
 		if err == nil {
- 			c.saveSession()
+			c.saveSession()
 			return nil
 		}
 		// session expired/invalid — fall through to QR login
 	}
- 
- 	err := c.qrcodeLogin(onQRReady)
- 	if err != nil {
- 		return err
- 	}
- 
- 	c.saveSession()
- 	return nil
+
+	err := c.qrcodeLogin(onQRReady)
+	if err != nil {
+		return err
+	}
+
+	c.saveSession()
+	return nil
 }
 
- func (c *jboxCli) HasSession() bool {
- 	session, err := c.getPersistentSession()
- 	if err != nil {
- 		return false
- 	}
+func (c *jboxCli) HasSession() bool {
+	session, err := c.getPersistentSession()
+	if err != nil {
+		return false
+	}
 	return session != nil && len(session.JAAuthCookie) > 0
 }
 
- type jboxUserResponse struct {
- 	AccountUserID string `json:"accountUserId"`
- 	Nickname      string `json:"nickname"`
- 	Email         string `json:"email"`
- 	Enabled       bool   `json:"enabled"`
- }
- 
- func (c *jboxCli) fetchUserInfo() error {
- 	path := fmt.Sprintf("/user/v1/user/1/%s", c.session.UserID)
- 	resp, err := c.getRequest(c.baseUrl+path, map[string]string{
- 		"user_token":             c.session.UserToken,
- 		"with_belonging_teams":   "false",
- 		"pf":                     "",
- 	})
- 	if err != nil {
- 		return err
- 	}
- 	user := jboxUserResponse{}
- 	if err := utils.UnmarshalJson(resp, &user); err != nil {
- 		return err
- 	}
- 	c.session.Nickname = user.Nickname
- 	c.session.AccountUserID = user.AccountUserID
- 	return nil
- }
- 
- func (c *jboxCli) saveSession() error {
- 	data, err := json.Marshal(c.session)
- 	if err != nil {
- 		return err
- 	}
- 	dir := filepath.Dir(c.sessionPath)
- 	if err := os.MkdirAll(dir, 0755); err != nil {
- 		return err
- 	}
+type jboxUserResponse struct {
+	AccountUserID string `json:"accountUserId"`
+	Nickname      string `json:"nickname"`
+	Email         string `json:"email"`
+	Enabled       bool   `json:"enabled"`
+}
+
+func (c *jboxCli) fetchUserInfo() error {
+	path := fmt.Sprintf("/user/v1/user/1/%s", c.session.UserID)
+	resp, err := c.getRequest(c.baseUrl+path, map[string]string{
+		"user_token":           c.session.UserToken,
+		"with_belonging_teams": "false",
+		"pf":                   "",
+	})
+	if err != nil {
+		return err
+	}
+	user := jboxUserResponse{}
+	if err := utils.UnmarshalJson(resp, &user); err != nil {
+		return err
+	}
+	c.session.Nickname = user.Nickname
+	c.session.AccountUserID = user.AccountUserID
+	return nil
+}
+
+func (c *jboxCli) saveSession() error {
+	data, err := json.Marshal(c.session)
+	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(c.sessionPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
 	return os.WriteFile(c.sessionPath, data, 0600)
 }
 
- func (c *jboxCli) SessionInfo() []string {
- 	info := make([]string, 0, 4)
- 	if c.session.Nickname != "" {
- 		info = append(info, fmt.Sprintf("User: %s", c.session.Nickname))
- 	} else if c.session.UserID != "" {
- 		info = append(info, fmt.Sprintf("User: %s", c.session.UserID))
- 	}
- 	info = append(info, "Session: active")
- 	if c.spaceInfo != nil && c.spaceInfo.ExpiresIn > 0 {
- 		expires := time.Now().Add(time.Duration(c.spaceInfo.ExpiresIn) * time.Second)
- 		info = append(info, fmt.Sprintf("Expires: %s", expires.Format("15:04:05")))
- 	}
- 	if c.session.AccountUserID != "" {
- 		info = append(info, fmt.Sprintf("Account: %s", c.session.AccountUserID))
- 	}
- 	return info
- }
- 
+func (c *jboxCli) SessionInfo() []string {
+	info := make([]string, 0, 4)
+	if c.session.Nickname != "" {
+		info = append(info, fmt.Sprintf("User: %s", c.session.Nickname))
+	} else if c.session.UserID != "" {
+		info = append(info, fmt.Sprintf("User: %s", c.session.UserID))
+	}
+	info = append(info, "Session: active")
+	if c.spaceInfo != nil && c.spaceInfo.ExpiresIn > 0 {
+		expires := time.Now().Add(time.Duration(c.spaceInfo.ExpiresIn) * time.Second)
+		info = append(info, fmt.Sprintf("Expires: %s", expires.Format("15:04:05")))
+	}
+	if c.session.AccountUserID != "" {
+		info = append(info, fmt.Sprintf("Account: %s", c.session.AccountUserID))
+	}
+	return info
+}
+
 func (c *jboxCli) getPersonalSpaceInfo() (*models.PersonalSpaceInfo, error) {
 	url := "/user/v1/space/1/personal"
 	resp, err := c.postRequest(c.baseUrl+url, map[string]string{
@@ -231,12 +231,12 @@ func (c *jboxCli) loginInternal() error {
 	}
 
 	c.session.UserToken = loginRes.UserToken
- 	c.session.UserID = strconv.FormatInt(loginRes.UserID, 10)
+	c.session.UserID = strconv.FormatInt(loginRes.UserID, 10)
 	err = c.initSpace()
 	if err != nil {
 		return err
 	}
- 	_ = c.fetchUserInfo() // best-effort, won't block login
+	_ = c.fetchUserInfo() // best-effort, won't block login
 	return nil
 }
 

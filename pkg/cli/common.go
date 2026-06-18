@@ -3,7 +3,7 @@ package cli
 import (
 	"io"
 	"net/http"
-	"pangolin/utils"
+	"pangolin/pkg/utils"
 )
 
 func (c *jboxCli) postRequest(url string, query map[string]string, body io.Reader) (*http.Response, error) {

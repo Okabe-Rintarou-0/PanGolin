@@ -3,7 +3,7 @@ package cli
 import (
 	"fmt"
 	"pangolin/pkg/cli/models"
-	"pangolin/utils"
+	"pangolin/pkg/utils"
 
 	"github.com/spf13/cast"
 )
