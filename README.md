@@ -24,12 +24,13 @@
  ### 🦔 吉祥物
  穿山甲（Pangolin）贯穿设计，每个 prompt 和面板都有它的身影。
  
-## Start History
+## Star History
+
+<a href="https://www.star-history.com/?repos=Okabe-Rintarou-0%2FPanGolin&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=Okabe-Rintarou-0/PanGolin&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=Okabe-Rintarou-0/PanGolin&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=Okabe-Rintarou-0/PanGolin&type=date&legend=top-left" />
+ </picture>
+</a>
  
- 最开始只是写了一个简单的 Go CLI 工具，用来通过 API 操作 JBox 网盘——当时只有一个 `list` 命令和硬编码的 token。
- 
- 后来发现每次开终端输命令不够爽快，于是引入了 Bubble Tea 做 TUI，把扫码登录、session 管理、目录浏览都整合进一个交互界面里。
- 
- 再后来补上了 session 持久化、登录状态检测、文件排序和颜色标记，慢慢从一个玩具长成了日常能用的工具。
- 
- PanGolin 还在长。穿山甲挖洞从来不急。
