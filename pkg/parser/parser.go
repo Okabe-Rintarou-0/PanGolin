@@ -50,9 +50,11 @@ func (p *PipeParser) Parse(input string) cmd.Command {
 		case "help":
 			cmds = append(cmds, cmd.NewHelpCommand())
 		case "ls":
-			cmds = append(cmds, cmd.NewLsCommand(p.jboxCli, p.pathMgr.CurrentPath().Path(), cmdArgs...))
+			cmds = append(cmds, cmd.NewLsCommand(p.pathMgr, p.jboxCli, cmdArgs...))
 		case "cd":
- 			cmds = append(cmds, cmd.NewCdCommand(p.pathMgr, p.jboxCli, cmdArgs...))
+			cmds = append(cmds, cmd.NewCdCommand(p.pathMgr, p.jboxCli, cmdArgs...))
+		case "cp":
+			cmds = append(cmds, cmd.NewCpCommand(p.pathMgr, p.jboxCli, nil, cmdArgs...))
 		default:
 		}
 	}

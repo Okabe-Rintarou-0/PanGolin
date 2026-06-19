@@ -1,9 +1,11 @@
 package cmd
 
- import (
- 	"fmt"
- 	"io"
- )
+import (
+	"fmt"
+	"io"
+	"pangolin/pkg/cmd/models"
+	"strings"
+)
 
 type HelpCommand struct{}
 
@@ -12,20 +14,30 @@ func NewHelpCommand() *HelpCommand {
 }
 
 func (h *HelpCommand) Execute(in io.Reader, out io.Writer) error {
-	helpText := `Available commands:
-  help           Show this help message
-  ls [<path>]    List files and directories
-   cd [<dir>]     Change directory (default: /)
-  clear          Clear the screen
- `
- 	helpText += `
- Keybinds:
-   Enter          Execute command
-   Ctrl+C / Esc   Quit
- `
+	cmds := []Command{
+		&HelpCommand{},
+		&LsCommand{},
+		&CdCommand{},
+		&CpCommand{},
+	}
 
- 	_, err := fmt.Fprint(out, helpText)
-	return err
+	fmt.Fprint(out, "Commands:\n\n")
+	for _, c := range cmds {
+		fmt.Fprintf(out, "  %-10s %s\n", c.Name()+":", c.Help())
+		if ex := c.Examples(); ex != "" {
+			for line := range strings.SplitSeq(strings.TrimSuffix(ex, "\n"), "\n") {
+				fmt.Fprintf(out, "    %s\n", line)
+			}
+		}
+		fmt.Fprint(out, "\n")
+	}
+
+	fmt.Fprint(out, "Keybinds:\n  Enter          Execute command\n  Ctrl+C / Esc   Quit\n  Tab            Auto-complete\n  ↑/↓            Command history\n")
+	return nil
 }
- 
- func (h *HelpCommand) Hint(input string) []string { return nil }
+
+func (h *HelpCommand) Hint(args []string) []models.HintEntry { return nil }
+func (h *HelpCommand) Name() string                          { return "help" }
+func (h *HelpCommand) Help() string                          { return "Show this help message" }
+func (h *HelpCommand) Examples() string                      { return "" }
+func (h *HelpCommand) ShouldExecAsync() bool                 { return false }

@@ -1,14 +1,17 @@
-﻿package tui
+package tui
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"pangolin/pkg/cli"
 	"pangolin/pkg/cmd"
+	"pangolin/pkg/cmd/models"
 	"pangolin/pkg/parser"
 	"pangolin/pkg/path"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -21,6 +24,8 @@ type mode int
 const (
 	modeLogin mode = iota
 	modeShell
+	headerHeight = 8
+	inputHeight  = 3
 )
 
 var (
@@ -36,6 +41,8 @@ var (
 	titleStyle = lipgloss.NewStyle().
 			Foreground(brand).
 			Bold(true)
+
+	shellStyle = lipgloss.NewStyle().Padding(0, 2)
 
 	errorStyle = lipgloss.NewStyle().
 			Foreground(errorClr)
@@ -59,6 +66,15 @@ type msgLoginError struct {
 
 type msgCheckingSession struct{}
 
+type cpProgressMsg struct {
+	completed int
+	total     int
+}
+
+type cpDoneMsg struct {
+	err error
+}
+
 type TUI struct {
 	program         *tea.Program
 	mode            mode
@@ -75,6 +91,13 @@ type TUI struct {
 	height   int
 	pathMgr  path.PathManager
 	parser   parser.Parser
+
+	cpProgress    *progress.Model
+	cpRunning     bool
+	cpProgressIdx int
+
+	history    []string
+	historyIdx int
 }
 
 func NewTUI(pathMgr path.PathManager, parser parser.Parser, jbox cli.JboxClient) tea.Model {
@@ -83,7 +106,8 @@ func NewTUI(pathMgr path.PathManager, parser parser.Parser, jbox cli.JboxClient)
 	ti.Prompt = ""
 	ti.Focus()
 
-	vp := viewport.New(0, 0)
+	vp := viewport.New(100, 20)
+	p := progress.New(progress.WithDefaultGradient())
 
 	return &TUI{
 		mode: modeLogin,
@@ -97,10 +121,13 @@ func NewTUI(pathMgr path.PathManager, parser parser.Parser, jbox cli.JboxClient)
 			"🦔 pangolin shell ready",
 			"type help for commands",
 		},
-		input:    ti,
-		viewport: vp,
-		parser:   parser,
-		pathMgr:  pathMgr,
+		input:         ti,
+		viewport:      vp,
+		parser:        parser,
+		pathMgr:       pathMgr,
+		cpProgress:    &p,
+		cpProgressIdx: -1,
+		historyIdx:    -1,
 	}
 }
 
@@ -151,6 +178,7 @@ func (t *TUI) completePath() {
 		return
 	}
 
+	hasTrailingSpace := strings.HasSuffix(inputVal, " ")
 	fields := strings.Fields(inputVal)
 	if len(fields) == 0 {
 		return
@@ -162,47 +190,74 @@ func (t *TUI) completePath() {
 	switch cmdName {
 	case "cd":
 		command = cmd.NewCdCommand(t.pathMgr, t.jbox, cmdArgs...)
+	case "ls":
+		command = cmd.NewLsCommand(t.pathMgr, t.jbox, cmdArgs...)
+	case "cp":
+		command = cmd.NewCpCommand(t.pathMgr, t.jbox, nil, cmdArgs...)
 	default:
 		return
 	}
 
-	hints := command.Hint(inputVal)
+	hints := command.Hint(cmdArgs)
 	if len(hints) == 0 {
-		// Show brief feedback even when no completions exist
 		t.lines = append(t.lines, mutedText.Render("  (no completions)"))
-		t.sync()
+		t.syncViewPort()
 		t.viewport.GotoBottom()
 		return
 	}
 
-	partial := strings.Join(cmdArgs, " ")
-	if len(hints) == 1 {
- 		t.input.SetValue(cmdName + " " + hints[0])
- 		t.input.CursorEnd()
- 		return
- 	}
-	// Multiple matches — try common prefix
-	commonPrefix := longestCommonPrefix(hints)
-	if commonPrefix != partial && commonPrefix != "" {
- 		t.input.SetValue(cmdName + " " + commonPrefix)
- 		t.input.CursorEnd()
- 		return
- 	}
+	var prefix strings.Builder
+	prefix.WriteString(cmdName)
+	lastArgIdx := len(cmdArgs)
+	if !hasTrailingSpace && len(cmdArgs) > 0 {
+		lastArgIdx = len(cmdArgs) - 1
+	}
+	for i := 0; i < lastArgIdx; i++ {
+		prefix.WriteString(" ")
+		prefix.WriteString(cmdArgs[i])
+	}
+	prefix.WriteString(" ")
 
-	// Partial is already the common prefix — show candidates
-	t.lines = append(t.lines, "  "+strings.Join(hints, "  "))
-	t.sync()
+	if len(hints) == 1 {
+		prefix.WriteString(hints[0].RealValue())
+		t.input.SetValue(prefix.String())
+		t.input.CursorEnd()
+		return
+	}
+
+	currentPartial := ""
+	if !hasTrailingSpace && len(cmdArgs) > 0 {
+		currentPartial = cmdArgs[len(cmdArgs)-1]
+	}
+
+	commonPrefix := longestCommonPrefix(hints)
+	if commonPrefix != currentPartial && commonPrefix != "" {
+		prefix.WriteString(commonPrefix)
+		t.input.SetValue(prefix.String())
+		t.input.CursorEnd()
+		return
+	}
+
+	var sb strings.Builder
+	for i, hint := range hints {
+		if i > 0 {
+			sb.WriteString(" ")
+		}
+		sb.WriteString(hint.DisplayValue())
+	}
+	t.lines = append(t.lines, "  "+sb.String())
+
+	t.syncViewPort()
 	t.viewport.GotoBottom()
 }
 
-// longestCommonPrefix returns the longest string that is a prefix of all strings in the slice.
-func longestCommonPrefix(strs []string) string {
-	if len(strs) == 0 {
+func longestCommonPrefix(hints models.HintEntries) string {
+	if len(hints) == 0 {
 		return ""
 	}
-	prefix := strs[0]
-	for _, s := range strs[1:] {
-		for len(prefix) > 0 && !strings.HasPrefix(s, prefix) {
+	prefix := hints[0].RealValue()
+	for _, hint := range hints[1:] {
+		for len(prefix) > 0 && !strings.HasPrefix(hint.RealValue(), prefix) {
 			prefix = prefix[:len(prefix)-1]
 		}
 	}
@@ -210,18 +265,34 @@ func longestCommonPrefix(strs []string) string {
 }
 
 func (t *TUI) exec(inputLine string) {
-
 	inputLine = strings.TrimSpace(inputLine)
 	if inputLine == "" {
 		return
 	}
 
+	if len(t.history) == 0 || t.history[len(t.history)-1] != inputLine {
+		t.history = append(t.history, inputLine)
+	}
+	t.historyIdx = -1
+
 	t.lines = append(t.lines, t.promptStr()+inputLine)
 
 	if inputLine == "clear" {
 		t.lines = []string{}
-		t.sync()
+		t.syncViewPort()
 		t.viewport.GotoBottom()
+		return
+	}
+
+	// optimize it
+	parts := strings.Fields(inputLine)
+	if len(parts) > 0 && parts[0] == "cp" {
+		cpCmd := cmd.NewCpCommand(t.pathMgr, t.jbox, func(current, total int) {
+			if t.program != nil {
+				t.program.Send(cpProgressMsg{current, total})
+			}
+		}, parts[1:]...)
+		t.execAsync(cpCmd)
 		return
 	}
 
@@ -233,33 +304,53 @@ func (t *TUI) exec(inputLine string) {
 	var outputBuffer bytes.Buffer
 	err := command.Execute(os.Stdin, &outputBuffer)
 	if err != nil {
-		t.lines = append(t.lines, "Error: "+err.Error())
+		t.lines = append(t.lines, errorStyle.Render("Error: "+err.Error()))
 	}
 
 	outputStr := outputBuffer.String()
 	if outputStr != "" {
 		outputStr = strings.ReplaceAll(outputStr, "\r", "")
-		outputLines := strings.Split(strings.TrimRight(outputStr, "\n"), "\n")
-		for _, line := range outputLines {
+		outputLines := strings.SplitSeq(strings.TrimRight(outputStr, "\n"), "\n")
+		for line := range outputLines {
 			if line != "" {
 				t.lines = append(t.lines, line)
 			}
 		}
 	}
 
-	t.sync()
+	t.syncViewPort()
 	t.viewport.GotoBottom()
 }
 
-func (t *TUI) sync() {
+func (t *TUI) execAsync(c cmd.Command) {
+	lineIdx := len(t.lines)
+	t.lines = append(t.lines, mutedText.Render("Counting..."))
+	t.cpProgressIdx = lineIdx
+	t.cpRunning = true
+
+	go func() {
+		err := c.Execute(nil, io.Discard)
+		if t.program != nil {
+			t.program.Send(cpDoneMsg{err})
+		}
+	}()
+}
+
+func (t *TUI) layoutViewport() {
+	if t.width == 0 || t.height == 0 {
+		return
+	}
+	t.viewport.Width = t.width - 2
+	t.viewport.Height = max(t.height-headerHeight-inputHeight, 3)
+}
+
+func (t *TUI) syncViewPort() {
 	var sb strings.Builder
-	sb.WriteString(titleStyle.Render("SHELL"))
-	sb.WriteString("\n\n")
 	for _, l := range t.lines {
 		sb.WriteString(l)
 		sb.WriteString("\n")
 	}
-	t.viewport.SetContent(sb.String())
+	t.viewport.SetContent(shellStyle.Width(t.width - 2).Render(sb.String()))
 }
 
 func (t *TUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -277,7 +368,8 @@ func (t *TUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case msgLoginSuccess:
 		t.mode = modeShell
 		t.info = t.jbox.SessionInfo()
-		t.sync()
+		t.layoutViewport()
+		t.syncViewPort()
 		return t, nil
 
 	case msgLoginError:
@@ -289,6 +381,31 @@ func (t *TUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		t.checkingSession = true
 		return t, nil
 
+	case cpProgressMsg:
+		if t.cpRunning && t.cpProgressIdx >= 0 && t.cpProgressIdx < len(t.lines) && msg.total > 0 {
+			t.cpProgress.Width = t.width - 4
+			pct := float64(msg.completed) / float64(msg.total)
+			bar := t.cpProgress.ViewAs(pct)
+			t.lines[t.cpProgressIdx] = bar
+			t.syncViewPort()
+			t.viewport.GotoBottom()
+		}
+		return t, nil
+
+	case cpDoneMsg:
+		t.cpRunning = false
+		if t.cpProgressIdx >= 0 && t.cpProgressIdx < len(t.lines) {
+			if msg.err != nil {
+				t.lines[t.cpProgressIdx] = errorStyle.Render("Error: " + msg.err.Error())
+			} else {
+				t.lines[t.cpProgressIdx] = "Done"
+			}
+		}
+		t.cpProgressIdx = -1
+		t.syncViewPort()
+		t.viewport.GotoBottom()
+		return t, nil
+
 	case tea.KeyMsg:
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
@@ -297,6 +414,29 @@ func (t *TUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if t.mode == modeShell {
 				t.exec(t.input.Value())
 				t.input.SetValue("")
+			}
+		case tea.KeyUp:
+			if t.mode == modeShell && len(t.history) > 0 {
+				if t.historyIdx == -1 {
+					t.historyIdx = len(t.history) - 1
+				} else if t.historyIdx > 0 {
+					t.historyIdx--
+				}
+				t.input.SetValue(t.history[t.historyIdx])
+				t.input.CursorEnd()
+			}
+		case tea.KeyDown:
+			if t.mode == modeShell {
+				if t.historyIdx >= 0 {
+					t.historyIdx++
+					if t.historyIdx >= len(t.history) {
+						t.historyIdx = -1
+						t.input.SetValue("")
+					} else {
+						t.input.SetValue(t.history[t.historyIdx])
+					}
+					t.input.CursorEnd()
+				}
 			}
 		case tea.KeyTab:
 			if t.mode == modeShell {
@@ -307,26 +447,8 @@ func (t *TUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		t.width = msg.Width
 		t.height = msg.Height
-
-		promptLen := lipgloss.Width(t.promptStr())
-		t.input.Width = msg.Width - promptLen - 6
-
-		baseBox := boxStyle.Copy().Width(t.width - 2)
-		info := strings.Join(t.info, "\n")
-		header := baseBox.Render(titleStyle.Render("🦔 PANGOLIN SESSION INFO") + "\n\n" + info)
-		headerHeight := lipgloss.Height(header)
-
-		shellOuterHeight := t.height - headerHeight - 1 - 2
-		viewportHeight := shellOuterHeight - 2
-
-		if viewportHeight < 3 {
-			viewportHeight = 3
-		}
-
-		t.viewport.Width = t.width - 4
-		t.viewport.Height = viewportHeight
-
-		t.sync()
+		t.layoutViewport()
+		t.syncViewPort()
 	}
 
 	if t.mode == modeShell {
@@ -353,21 +475,14 @@ func (t *TUI) View() string {
 }
 
 func (t *TUI) shellView() string {
-	baseBox := boxStyle.Copy().Width(t.width - 2)
+	infoBox := boxStyle.Copy().Width(t.width - 2)
 	info := strings.Join(t.info, "\n")
-	header := baseBox.Render(titleStyle.Render("🦔 PANGOLIN SESSION INFO") + "\n\n" + info)
+	header := infoBox.Render(titleStyle.Render("🦔 PANGOLIN SESSION INFO") + "\n\n" + info)
 
-	var shellContainer strings.Builder
-	shellContainer.WriteString(t.viewport.View())
-	shellContainer.WriteString("\n\n")
-	shellContainer.WriteString(t.promptStr())
-	shellContainer.WriteString(t.input.View())
+	input := boxStyle.Copy().Width(t.width - 2).Render(t.promptStr() + t.input.View())
 
-	shellOuterHeight := t.viewport.Height + 2
-	shellBoxStyle := baseBox.Copy().Height(shellOuterHeight)
-	shell := shellBoxStyle.Render(shellContainer.String())
-
-	return lipgloss.JoinVertical(lipgloss.Left, header, "", shell)
+	result := lipgloss.JoinVertical(lipgloss.Left, header, t.viewport.View(), input)
+	return result
 }
 
 func (t *TUI) loginView() string {
@@ -394,10 +509,7 @@ func (t *TUI) loginView() string {
 
 	sb.WriteString("\n  " + mutedText.Render("Ctrl+C to quit"))
 
-	innerW := t.width - 12
-	if innerW < 30 {
-		innerW = 30
-	}
+	innerW := max(t.width-12, 30)
 	minH := 12
 
 	loginBox := boxStyle.Copy().

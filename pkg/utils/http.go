@@ -35,6 +35,10 @@ func UnmarshalJson[T any](resp *http.Response, target *T) error {
 	return d.Decode(target)
 }
 
+func IsSuccessStatusCode(statusCode int) bool {
+	return statusCode >= 200 && statusCode <= 299
+}
+
 func FromCookiesString(cookies string) map[string]string {
 	tokens := strings.Split(cookies, ";")
 	cookiesMap := make(map[string]string)

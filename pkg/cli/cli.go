@@ -15,6 +15,8 @@ type JboxClient interface {
 	HasSession() bool
  	SessionInfo() []string
 	List(path string) ([]FileEntry, error)
+	GetFileDownloadInfo(filePath string) (*models.FileDownloadInfo, error)
+	DownloadFile(remotePath string, localPath string, onProgress models.DownloadProgressHandler) error
 }
 
 type jboxCli struct {

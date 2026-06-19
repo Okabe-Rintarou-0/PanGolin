@@ -18,11 +18,11 @@ type PaginationOption struct {
 }
 
 type Session struct {
-	JAAuthCookie string `json:"JAAuthCookie"`
-	UserToken    string `json:"userToken"`
-	UserID       string `json:"userID"`
- 	Nickname     string `json:"nickname"`
- 	AccountUserID string `json:"accountUserId"`
+	JAAuthCookie  string `json:"JAAuthCookie"`
+	UserToken     string `json:"userToken"`
+	UserID        string `json:"userID"`
+	Nickname      string `json:"nickname"`
+	AccountUserID string `json:"accountUserId"`
 }
 
 type LoginPayload struct {
@@ -41,41 +41,41 @@ type UserInfo struct {
 }
 
 type Entities struct {
-	AccountNo     string        `json:"accountNo"`
-	Avatars       interface{}   `json:"avatars"`
-	Name          string        `json:"name"`
-	UserType      string        `json:"userType"`
-	UserStyleName string        `json:"userStyleName"`
-	Email         string        `json:"email"`
-	Code          string        `json:"code"`
-	ExpireDate    string        `json:"expireDate"`
-	Mobile        string        `json:"mobile"`
-	Identities    []Identity    `json:"identities"`
-	OrganizeName  string        `json:"organizeName"`
-	Status        string        `json:"status"`
-	StatusEN      string        `json:"statusEN"`
-	ResponseName  interface{}   `json:"responseName"`
-	OrganizeID    string        `json:"organizeId"`
-	AuthAccounts  []interface{} `json:"authAccounts"`
+	AccountNo     string     `json:"accountNo"`
+	Avatars       any        `json:"avatars"`
+	Name          string     `json:"name"`
+	UserType      string     `json:"userType"`
+	UserStyleName string     `json:"userStyleName"`
+	Email         string     `json:"email"`
+	Code          string     `json:"code"`
+	ExpireDate    string     `json:"expireDate"`
+	Mobile        string     `json:"mobile"`
+	Identities    []Identity `json:"identities"`
+	OrganizeName  string     `json:"organizeName"`
+	Status        string     `json:"status"`
+	StatusEN      string     `json:"statusEN"`
+	ResponseName  any        `json:"responseName"`
+	OrganizeID    string     `json:"organizeId"`
+	AuthAccounts  []any      `json:"authAccounts"`
 }
 
 type Identity struct {
-	Kind            string      `json:"kind"`
-	IsDefault       bool        `json:"isDefault"`
-	DefaultOptional bool        `json:"defaultOptional"`
-	Code            string      `json:"code"`
-	UserType        string      `json:"userType"`
-	Organize        Organize    `json:"organize"`
-	TopOrganize     *Organize   `json:"topOrganize"`
-	Status          *string     `json:"status"`
-	ExpireDate      *string     `json:"expireDate"`
-	CreateDate      int64       `json:"createDate"`
-	UpdateDate      int64       `json:"updateDate"`
-	Gjm             *string     `json:"gjm"`
-	FacultyType     interface{} `json:"facultyType"`
-	PhotoURL        *string     `json:"photoUrl"`
-	Type            *Organize   `json:"type"`
-	UserStyleName   string      `json:"userStyleName"`
+	Kind            string    `json:"kind"`
+	IsDefault       bool      `json:"isDefault"`
+	DefaultOptional bool      `json:"defaultOptional"`
+	Code            string    `json:"code"`
+	UserType        string    `json:"userType"`
+	Organize        Organize  `json:"organize"`
+	TopOrganize     *Organize `json:"topOrganize"`
+	Status          *string   `json:"status"`
+	ExpireDate      *string   `json:"expireDate"`
+	CreateDate      int64     `json:"createDate"`
+	UpdateDate      int64     `json:"updateDate"`
+	Gjm             *string   `json:"gjm"`
+	FacultyType     any       `json:"facultyType"`
+	PhotoURL        *string   `json:"photoUrl"`
+	Type            *Organize `json:"type"`
+	UserStyleName   string    `json:"userStyleName"`
 }
 
 type Organize struct {
@@ -135,8 +135,8 @@ type ExtensionData struct {
 }
 
 type DefaultTeamOptions struct {
-	DefaultRoleID  int64       `json:"defaultRoleId"`
-	SpaceQuotaSize interface{} `json:"spaceQuotaSize"`
+	DefaultRoleID  int64 `json:"defaultRoleId"`
+	SpaceQuotaSize any   `json:"spaceQuotaSize"`
 }
 
 type DefaultUserOptions struct {
@@ -180,11 +180,11 @@ type DirectoryInfo struct {
 	TotalNum      int64           `json:"totalNum"`
 	ETag          string          `json:"eTag"`
 	Contents      []*FileInfo     `json:"contents"`
-	LocalSync     interface{}     `json:"localSync"`
+	LocalSync     any             `json:"localSync"`
 	AuthorityList map[string]bool `json:"authorityList"`
 }
 
-type MetaData map[string]interface{}
+type MetaData map[string]any
 
 type FileInfo struct {
 	Path                     []string        `json:"path"`
@@ -193,7 +193,7 @@ type FileInfo struct {
 	UserID                   string          `json:"userId"`
 	CreationTime             string          `json:"creationTime"`
 	ModificationTime         string          `json:"modificationTime"`
-	VersionID                interface{}     `json:"versionId"`
+	VersionID                any             `json:"versionId"`
 	VirusAuditStatus         int64           `json:"virusAuditStatus"`
 	SensitiveWordAuditStatus int64           `json:"sensitiveWordAuditStatus"`
 	ContentType              string          `json:"contentType"`
@@ -228,3 +228,17 @@ type PersonalSpaceInfo struct {
 	Status      int64  `json:"status"`
 	Message     string `json:"message"`
 }
+
+type FileDownloadInfo struct {
+	Type             string   `json:"type"`
+	CreationTime     string   `json:"creationTime"`
+	ModificationTime string   `json:"modificationTime"`
+	ContentType      string   `json:"contentType"`
+	Size             string   `json:"size"`
+	ETag             string   `json:"eTag"`
+	Crc64            string   `json:"crc64"`
+	CosUrl           string   `json:"cosUrl"`
+	AvailableCosUrls []string `json:"availableCosUrls"`
+}
+
+type DownloadProgressHandler = func(downloaded int64, total int64)

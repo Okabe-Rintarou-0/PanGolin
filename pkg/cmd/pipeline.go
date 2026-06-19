@@ -1,6 +1,9 @@
 package cmd
 
-import "io"
+import (
+	"io"
+	"pangolin/pkg/cmd/models"
+)
 
 type Pipeline struct {
 	commands []Command
@@ -55,10 +58,32 @@ func (p *Pipeline) Execute(in io.Reader, out io.Writer) error {
 
 	return lastErr
 }
- 
- func (p *Pipeline) Hint(input string) []string {
- 	if len(p.commands) == 0 {
- 		return nil
- 	}
- 	return p.commands[len(p.commands)-1].Hint(input)
- }
+
+func (p *Pipeline) Commands() []Command {
+	return p.commands
+}
+
+func (p *Pipeline) Name() string {
+	if len(p.commands) > 0 {
+		return p.commands[len(p.commands)-1].Name()
+	}
+	return "pipeline"
+}
+
+func (p *Pipeline) Help() string { return "" }
+
+func (p *Pipeline) Examples() string { return "" }
+
+func (p *Pipeline) ShouldExecAsync() bool {
+	if len(p.commands) == 0 {
+		return false
+	}
+	return p.commands[len(p.commands)-1].ShouldExecAsync()
+}
+
+func (p *Pipeline) Hint(args []string) []models.HintEntry {
+	if len(p.commands) == 0 {
+		return nil
+	}
+	return p.commands[len(p.commands)-1].Hint(args)
+}
