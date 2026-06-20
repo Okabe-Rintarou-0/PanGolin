@@ -4,28 +4,52 @@ import (
 	"pangolin/pkg/cli"
 	"pangolin/pkg/cmd"
 	"pangolin/pkg/path"
+	"pangolin/pkg/tui/handle"
 	"strings"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // Parser 定义了解析终端输入的接口
 type Parser interface {
-	Parse(input string) cmd.Command
+	Parse(nextLineNo int, input string) cmd.Command
+	ParseSingleCmd(nextLineNo int, cmdName string, cmdArgs ...string) cmd.Command
+	Init(program *tea.Program)
 }
 
-// PipeParser 是 Parser 接口的一个经典实现（Implementation）
-// 它专门负责解析带有 "|" 管道符的命令链
 type PipeParser struct {
 	pathMgr path.PathManager
 	jboxCli cli.JboxClient
+	program *tea.Program
 }
 
 // NewPipeParser 实例化一个管道解析器
 func NewPipeParser(pathMgr path.PathManager, jboxCli cli.JboxClient) Parser {
-	return &PipeParser{pathMgr, jboxCli}
+	return &PipeParser{pathMgr: pathMgr,
+		jboxCli: jboxCli,
+		program: nil,
+	}
+}
+
+func (p *PipeParser) Init(program *tea.Program) {
+	p.program = program
+}
+
+func (p *PipeParser) ParseSingleCmd(nextLineNo int, cmdName string, cmdArgs ...string) cmd.Command {
+	var command cmd.Command
+	switch cmdName {
+	case "cd":
+		command = cmd.NewCdCommand(p.pathMgr, p.jboxCli, cmdArgs...)
+	case "ls":
+		command = cmd.NewLsCommand(p.pathMgr, p.jboxCli, cmdArgs...)
+	case "cp":
+		command = cmd.NewCpCommand(nil, p.pathMgr, p.jboxCli, nil, cmdArgs...)
+	}
+	return command
 }
 
 // Parse 实现了 Parser 接口，解析原始字符串并组装成 Command
-func (p *PipeParser) Parse(input string) cmd.Command {
+func (p *PipeParser) Parse(nextLineNo int, input string) cmd.Command {
 	input = strings.TrimSpace(input)
 	if input == "" {
 		return nil
@@ -54,7 +78,8 @@ func (p *PipeParser) Parse(input string) cmd.Command {
 		case "cd":
 			cmds = append(cmds, cmd.NewCdCommand(p.pathMgr, p.jboxCli, cmdArgs...))
 		case "cp":
-			cmds = append(cmds, cmd.NewCpCommand(p.pathMgr, p.jboxCli, nil, cmdArgs...))
+			h := handle.NewProgressBarHandle(nextLineNo, p.program)
+			cmds = append(cmds, cmd.NewCpCommand(h, p.pathMgr, p.jboxCli, nil, cmdArgs...))
 		default:
 		}
 	}

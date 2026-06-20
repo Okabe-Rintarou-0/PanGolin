@@ -124,9 +124,8 @@ func (l *LsCommand) Hint(args []string) []models.HintEntry {
 	sort.Sort(dirs)
 	return dirs
 }
-func (l *LsCommand) ShouldExecAsync() bool { return false }
-func (l *LsCommand) Name() string          { return "ls" }
-func (l *LsCommand) Help() string          { return "List files and directories" }
+func (l *LsCommand) Name() string { return "ls" }
+func (l *LsCommand) Help() string { return "List files and directories" }
 func (l *LsCommand) Examples() string {
 	return "ls\nls /some/path"
 }

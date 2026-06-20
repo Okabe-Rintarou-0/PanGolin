@@ -7,6 +7,7 @@ import (
 	"pangolin/pkg/cli"
 	"pangolin/pkg/cmd/models"
 	"pangolin/pkg/path"
+	"pangolin/pkg/tui/handle"
 	stdpath "path"
 	"path/filepath"
 	"sort"
@@ -26,10 +27,11 @@ type CpCommand struct {
 	srcPath    string
 	destPath   string
 	recursive  bool
+	pbarHandle *handle.ProgressBarHandle
 	onProgress func(current, total int)
 }
 
-func NewCpCommand(pathMgr path.PathManager, cli cli.JboxClient, onProgress func(int, int), args ...string) *CpCommand {
+func NewCpCommand(pbarHandle *handle.ProgressBarHandle, pathMgr path.PathManager, cli cli.JboxClient, onProgress func(int, int), args ...string) *CpCommand {
 	recursive := false
 	remaining := args
 	if len(remaining) > 0 && remaining[0] == "-r" {
@@ -51,6 +53,7 @@ func NewCpCommand(pathMgr path.PathManager, cli cli.JboxClient, onProgress func(
 		destPath:   dest,
 		recursive:  recursive,
 		onProgress: onProgress,
+		pbarHandle: pbarHandle,
 	}
 }
 
@@ -148,14 +151,13 @@ func (c *CpCommand) copyDirBFS(rootSrc, rootDest string, rootEntries []cli.FileE
 	return c.downloadFiles(files, out)
 }
 
-func (c *CpCommand) ShouldExecAsync() bool { return true }
-func (c *CpCommand) Name() string          { return "cp" }
-func (c *CpCommand) Help() string          { return "Copy file/dir from cloud to local host" }
+func (c *CpCommand) Name() string { return "cp" }
+func (c *CpCommand) Help() string { return "Copy file/dir from cloud to local host" }
 func (c *CpCommand) Examples() string {
 	return "cp file.txt ~/Desktop/\ncp -r mydir ./backup/"
 }
 
-func (c *CpCommand) downloadFiles(files []fileTask, out io.Writer) error {
+func (c *CpCommand) downloadFiles(files []fileTask, _ io.Writer) error {
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, maxConcurrency)
 
@@ -166,6 +168,9 @@ func (c *CpCommand) downloadFiles(files []fileTask, out io.Writer) error {
 	var once sync.Once
 	var firstErr error
 
+	if c.pbarHandle != nil {
+		c.pbarHandle.Create()
+	}
 	for _, f := range files {
 		wg.Add(1)
 		go func(f fileTask) {
@@ -185,11 +190,17 @@ func (c *CpCommand) downloadFiles(files []fileTask, out io.Writer) error {
 			if c.onProgress != nil {
 				c.onProgress(completed, total)
 			}
+			if c.pbarHandle != nil {
+				c.pbarHandle.Set(completed, total)
+			}
 			mu.Unlock()
 		}(f)
 	}
 
 	wg.Wait()
+	if firstErr != nil && c.pbarHandle != nil {
+		c.pbarHandle.SetError(firstErr)
+	}
 	return firstErr
 }
 

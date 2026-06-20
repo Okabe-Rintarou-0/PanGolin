@@ -18,38 +18,50 @@ func (p *Pipeline) Execute(in io.Reader, out io.Writer) error {
 		return nil
 	}
 
-	// 如果只有一个命令，直接执行，不需要建立管道
 	if len(p.commands) == 1 {
 		return p.commands[0].Execute(in, out)
 	}
 
-	// 用于收集异步进程错误的 channel
+	// 错误收集 channel
 	errChan := make(chan error, len(p.commands)-1)
-	var pipesCloseFuncs []func() error
 
-	// 驱动链条：当前的输入源
+	// 用于存储所有创建出来的管道，以便后续统一清理
+	var pipeReaders []*io.PipeReader
+	var pipeWriters []*io.PipeWriter
+
+	// 确保无论发生什么，最后都关闭所有管道，释放被卡住的 Goroutine
+	defer func() {
+		for _, pw := range pipeWriters {
+			_ = pw.Close()
+		}
+		for _, pr := range pipeReaders {
+			_ = pr.Close()
+		}
+	}()
+
 	currentIn := in
 
-	// 遍历执行除了最后一个命令之外的所有中间命令
+	// 遍历执行中间命令
 	for i := 0; i < len(p.commands)-1; i++ {
 		pr, pw := io.Pipe()
-		pipesCloseFuncs = append(pipesCloseFuncs, pw.Close)
+		pipeReaders = append(pipeReaders, pr)
+		pipeWriters = append(pipeWriters, pw)
 
-		// 并发异步启动中间进程
-		go func(cmd Command, childIn io.Reader, childOut *io.PipeWriter, index int) {
+		// 异步启动中间进程
+		go func(cmd Command, childIn io.Reader, childOut *io.PipeWriter) {
 			err := cmd.Execute(childIn, childOut)
-			_ = childOut.Close() // 当前进程结束后，必须关闭管道写端，通知下一级 EOF
+			// 每一个中间命令执行完，立刻关闭自己的写端，通知下一级 EOF
+			_ = childOut.Close()
 			errChan <- err
-		}(p.commands[i], currentIn, pw, i)
+		}(p.commands[i], currentIn, pw)
 
-		// 下一个命令的输入源，变成当前管道的读取端
+		// 下一个命令的输入源
 		currentIn = pr
 	}
 
-	// 在当前主线程阻塞执行最后一个命令，它直接输出到外部传入的 out
+	// 在主线程阻塞执行最后一个命令
 	lastErr := p.commands[len(p.commands)-1].Execute(currentIn, out)
 
-	// 收集其他并发进程的错误
 	for i := 0; i < len(p.commands)-1; i++ {
 		if err := <-errChan; err != nil && lastErr == nil {
 			lastErr = err
@@ -73,13 +85,6 @@ func (p *Pipeline) Name() string {
 func (p *Pipeline) Help() string { return "" }
 
 func (p *Pipeline) Examples() string { return "" }
-
-func (p *Pipeline) ShouldExecAsync() bool {
-	if len(p.commands) == 0 {
-		return false
-	}
-	return p.commands[len(p.commands)-1].ShouldExecAsync()
-}
 
 func (p *Pipeline) Hint(args []string) []models.HintEntry {
 	if len(p.commands) == 0 {

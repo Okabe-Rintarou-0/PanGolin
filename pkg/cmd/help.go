@@ -40,4 +40,3 @@ func (h *HelpCommand) Hint(args []string) []models.HintEntry { return nil }
 func (h *HelpCommand) Name() string                          { return "help" }
 func (h *HelpCommand) Help() string                          { return "Show this help message" }
 func (h *HelpCommand) Examples() string                      { return "" }
-func (h *HelpCommand) ShouldExecAsync() bool                 { return false }

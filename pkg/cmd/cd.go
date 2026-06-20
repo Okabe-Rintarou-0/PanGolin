@@ -56,9 +56,8 @@ func (c *CdCommand) Execute(in io.Reader, out io.Writer) error {
 	return c.pathMgr.ChangeDir(fullPath)
 }
 
-func (c *CdCommand) ShouldExecAsync() bool { return false }
-func (c *CdCommand) Name() string          { return "cd" }
-func (c *CdCommand) Help() string          { return "Change directory (default: /)" }
+func (c *CdCommand) Name() string { return "cd" }
+func (c *CdCommand) Help() string { return "Change directory (default: /)" }
 func (c *CdCommand) Examples() string {
 	return "cd\ncd /some/dir\ncd .."
 }

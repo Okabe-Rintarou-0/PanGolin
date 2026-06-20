@@ -11,5 +11,4 @@ type Command interface {
 	Name() string
 	Help() string
 	Examples() string
-	ShouldExecAsync() bool
 }

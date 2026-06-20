@@ -1,17 +1,18 @@
 package tui
 
 import (
+	"bufio"
 	"bytes"
-	"io"
+	"log"
 	"os"
 	"pangolin/pkg/cli"
 	"pangolin/pkg/cmd"
 	"pangolin/pkg/cmd/models"
 	"pangolin/pkg/parser"
 	"pangolin/pkg/path"
+	"pangolin/pkg/tui/msg"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -54,27 +55,6 @@ var (
 			Foreground(mutedClr)
 )
 
-type msgQRReady struct {
-	url string
-}
-
-type msgLoginSuccess struct{}
-
-type msgLoginError struct {
-	err string
-}
-
-type msgCheckingSession struct{}
-
-type cpProgressMsg struct {
-	completed int
-	total     int
-}
-
-type cpDoneMsg struct {
-	err error
-}
-
 type TUI struct {
 	program         *tea.Program
 	mode            mode
@@ -92,22 +72,21 @@ type TUI struct {
 	pathMgr  path.PathManager
 	parser   parser.Parser
 
-	cpProgress    *progress.Model
-	cpRunning     bool
-	cpProgressIdx int
-
 	history    []string
 	historyIdx int
+
+	executeChan  chan cmd.Command
+	outputBuffer bytes.Buffer
 }
 
-func NewTUI(pathMgr path.PathManager, parser parser.Parser, jbox cli.JboxClient) tea.Model {
+func NewTUI(pathMgr path.PathManager, parser parser.Parser, jbox cli.JboxClient) *TUI {
 	ti := textinput.New()
 	ti.Placeholder = ""
 	ti.Prompt = ""
 	ti.Focus()
 
 	vp := viewport.New(100, 20)
-	p := progress.New(progress.WithDefaultGradient())
+	executeChan := make(chan cmd.Command, 1)
 
 	return &TUI{
 		mode: modeLogin,
@@ -121,38 +100,73 @@ func NewTUI(pathMgr path.PathManager, parser parser.Parser, jbox cli.JboxClient)
 			"🦔 pangolin shell ready",
 			"type help for commands",
 		},
-		input:         ti,
-		viewport:      vp,
-		parser:        parser,
-		pathMgr:       pathMgr,
-		cpProgress:    &p,
-		cpProgressIdx: -1,
-		historyIdx:    -1,
+		input:      ti,
+		viewport:   vp,
+		parser:     parser,
+		pathMgr:    pathMgr,
+		historyIdx: -1,
+
+		executeChan: executeChan,
 	}
 }
 
-func (t *TUI) SetProgram(p *tea.Program) {
+func (t *TUI) Start(p *tea.Program) {
 	t.program = p
+	go t.executeThreadFn()
+	f, _ := os.Create("tmp.log")
+	log.SetOutput(f)
+}
+
+func (t *TUI) printErr(err error) {
+	if err == nil {
+		return
+	}
+
+	t.lines = append(t.lines, errorStyle.Render("Error: "+err.Error()))
+}
+
+func (t *TUI) executeThreadFn() {
+	for cmd := range t.executeChan {
+		if cmd == nil {
+			continue
+		}
+		t.outputBuffer.Reset()
+		err := cmd.Execute(os.Stdin, &t.outputBuffer)
+		if err != nil {
+			t.printErr(err)
+		}
+
+		scanner := bufio.NewScanner(&t.outputBuffer)
+		for scanner.Scan() {
+			line := scanner.Text()
+			line = strings.ReplaceAll(line, "\r", "")
+			if line != "" {
+				t.lines = append(t.lines, line)
+			}
+		}
+
+		t.program.Send(msg.ExecuteDoneMsg{})
+	}
 }
 
 func (t *TUI) Init() tea.Cmd {
 	go func() {
 		if t.jbox.HasSession() {
-			t.program.Send(msgCheckingSession{})
+			t.program.Send(msg.CheckingSessionMsg{})
 		}
 
 		err := t.jbox.Login(func(qrUrl string) {
 			if t.program != nil {
-				t.program.Send(msgQRReady{url: qrUrl})
+				t.program.Send(msg.QRReadyMsg{Url: qrUrl})
 			}
 		})
 		if err != nil {
 			if t.program != nil {
-				t.program.Send(msgLoginError{err: err.Error()})
+				t.program.Send(msg.LoginErrorMsg{Err: err.Error()})
 			}
 		} else {
 			if t.program != nil {
-				t.program.Send(msgLoginSuccess{})
+				t.program.Send(msg.LoginSuccessMsg{})
 			}
 		}
 	}()
@@ -172,6 +186,10 @@ func (t *TUI) promptStr() string {
 	return "🦔 " + t.pathMgr.CurrentPath().Path() + " > "
 }
 
+func (t *TUI) nextLineNo() int {
+	return len(t.lines)
+}
+
 func (t *TUI) completePath() {
 	inputVal := t.input.Value()
 	if inputVal == "" || strings.Contains(inputVal, "|") {
@@ -185,18 +203,7 @@ func (t *TUI) completePath() {
 	}
 	cmdName := fields[0]
 	cmdArgs := fields[1:]
-
-	var command cmd.Command
-	switch cmdName {
-	case "cd":
-		command = cmd.NewCdCommand(t.pathMgr, t.jbox, cmdArgs...)
-	case "ls":
-		command = cmd.NewLsCommand(t.pathMgr, t.jbox, cmdArgs...)
-	case "cp":
-		command = cmd.NewCpCommand(t.pathMgr, t.jbox, nil, cmdArgs...)
-	default:
-		return
-	}
+	command := t.parser.ParseSingleCmd(t.nextLineNo(), cmdName, cmdArgs...)
 
 	hints := command.Hint(cmdArgs)
 	if len(hints) == 0 {
@@ -264,7 +271,13 @@ func longestCommonPrefix(hints models.HintEntries) string {
 	return prefix
 }
 
-func (t *TUI) exec(inputLine string) {
+func (t *TUI) clearShell() {
+	t.lines = []string{}
+	t.syncViewPort()
+	t.viewport.GotoBottom()
+}
+
+func (t *TUI) executeAsync(inputLine string) {
 	inputLine = strings.TrimSpace(inputLine)
 	if inputLine == "" {
 		return
@@ -276,64 +289,18 @@ func (t *TUI) exec(inputLine string) {
 	t.historyIdx = -1
 
 	t.lines = append(t.lines, t.promptStr()+inputLine)
+	t.syncViewPort()
+	t.viewport.GotoBottom()
 
 	if inputLine == "clear" {
-		t.lines = []string{}
-		t.syncViewPort()
-		t.viewport.GotoBottom()
+		t.clearShell()
 		return
 	}
-
-	// optimize it
-	parts := strings.Fields(inputLine)
-	if len(parts) > 0 && parts[0] == "cp" {
-		cpCmd := cmd.NewCpCommand(t.pathMgr, t.jbox, func(current, total int) {
-			if t.program != nil {
-				t.program.Send(cpProgressMsg{current, total})
-			}
-		}, parts[1:]...)
-		t.execAsync(cpCmd)
-		return
-	}
-
-	command := t.parser.Parse(inputLine)
+	command := t.parser.Parse(t.nextLineNo(), inputLine)
 	if command == nil {
 		return
 	}
-
-	var outputBuffer bytes.Buffer
-	err := command.Execute(os.Stdin, &outputBuffer)
-	if err != nil {
-		t.lines = append(t.lines, errorStyle.Render("Error: "+err.Error()))
-	}
-
-	outputStr := outputBuffer.String()
-	if outputStr != "" {
-		outputStr = strings.ReplaceAll(outputStr, "\r", "")
-		outputLines := strings.SplitSeq(strings.TrimRight(outputStr, "\n"), "\n")
-		for line := range outputLines {
-			if line != "" {
-				t.lines = append(t.lines, line)
-			}
-		}
-	}
-
-	t.syncViewPort()
-	t.viewport.GotoBottom()
-}
-
-func (t *TUI) execAsync(c cmd.Command) {
-	lineIdx := len(t.lines)
-	t.lines = append(t.lines, mutedText.Render("Counting..."))
-	t.cpProgressIdx = lineIdx
-	t.cpRunning = true
-
-	go func() {
-		err := c.Execute(nil, io.Discard)
-		if t.program != nil {
-			t.program.Send(cpDoneMsg{err})
-		}
-	}()
+	t.executeChan <- command
 }
 
 func (t *TUI) layoutViewport() {
@@ -353,91 +320,108 @@ func (t *TUI) syncViewPort() {
 	t.viewport.SetContent(shellStyle.Width(t.width - 2).Render(sb.String()))
 }
 
-func (t *TUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (t *TUI) showPrevHistoryCmd() {
+	if t.mode == modeShell && len(t.history) > 0 {
+		if t.historyIdx == -1 {
+			t.historyIdx = len(t.history) - 1
+		} else if t.historyIdx > 0 {
+			t.historyIdx--
+		}
+		t.input.SetValue(t.history[t.historyIdx])
+		t.input.CursorEnd()
+	}
+}
+
+func (t *TUI) showNextHistoryCmd() {
+	if t.mode == modeShell {
+		if t.historyIdx >= 0 {
+			t.historyIdx++
+			if t.historyIdx >= len(t.history) {
+				t.historyIdx = -1
+				t.input.SetValue("")
+			} else {
+				t.input.SetValue(t.history[t.historyIdx])
+			}
+			t.input.CursorEnd()
+		}
+	}
+}
+
+func (t *TUI) Update(tmsg tea.Msg) (tea.Model, tea.Cmd) {
 	var (
 		cmd  tea.Cmd
 		cmds []tea.Cmd
 	)
 
-	switch msg := msg.(type) {
-	case msgQRReady:
-		t.qrContent = t.renderQR(msg.url)
+	switch tmsg := tmsg.(type) {
+	case msg.QRReadyMsg:
+		t.qrContent = t.renderQR(tmsg.Url)
 		t.checkingSession = false
 		return t, nil
 
-	case msgLoginSuccess:
+	case msg.ExecuteDoneMsg:
+		t.syncViewPort()
+		t.viewport.GotoBottom()
+
+	case msg.LoginSuccessMsg:
 		t.mode = modeShell
 		t.info = t.jbox.SessionInfo()
 		t.layoutViewport()
 		t.syncViewPort()
 		return t, nil
 
-	case msgLoginError:
-		t.loginError = msg.err
+	case msg.LoginErrorMsg:
+		t.loginError = tmsg.Err
 		t.checkingSession = false
 		return t, nil
 
-	case msgCheckingSession:
+	case msg.CheckingSessionMsg:
 		t.checkingSession = true
 		return t, nil
 
-	case cpProgressMsg:
-		if t.cpRunning && t.cpProgressIdx >= 0 && t.cpProgressIdx < len(t.lines) && msg.total > 0 {
-			t.cpProgress.Width = t.width - 4
-			pct := float64(msg.completed) / float64(msg.total)
-			bar := t.cpProgress.ViewAs(pct)
-			t.lines[t.cpProgressIdx] = bar
+	case msg.ProgressMsg:
+		lineIdx := tmsg.LineIdx
+		total := tmsg.Total
+		current := tmsg.Current
+		err := tmsg.Err
+		pbar := tmsg.Pbar
+		log.Printf("progress msg, idx: %d/%d, curr: %d, total: %d", lineIdx, len(t.lines), current, total)
+		log.Printf("progress msg, %p", tmsg.Pbar)
+		if lineIdx >= len(t.lines) {
+			needed := lineIdx + 1 - len(t.lines)
+			t.lines = append(t.lines, make([]string, needed)...)
+		}
+		if total > 0 {
+			pbar.Width = t.width - 4
+			var bar string
+			if err != nil {
+				bar = errorStyle.Render("Error: " + err.Error())
+			} else if current != total {
+				pct := float64(current) / float64(total)
+				bar = pbar.ViewAs(pct)
+			} else {
+				bar = "Done"
+			}
+			log.Printf("bar: %s", bar)
+			t.lines[lineIdx] = bar
 			t.syncViewPort()
 			t.viewport.GotoBottom()
 		}
 		return t, nil
 
-	case cpDoneMsg:
-		t.cpRunning = false
-		if t.cpProgressIdx >= 0 && t.cpProgressIdx < len(t.lines) {
-			if msg.err != nil {
-				t.lines[t.cpProgressIdx] = errorStyle.Render("Error: " + msg.err.Error())
-			} else {
-				t.lines[t.cpProgressIdx] = "Done"
-			}
-		}
-		t.cpProgressIdx = -1
-		t.syncViewPort()
-		t.viewport.GotoBottom()
-		return t, nil
-
 	case tea.KeyMsg:
-		switch msg.Type {
+		switch tmsg.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
 			return t, tea.Quit
 		case tea.KeyEnter:
 			if t.mode == modeShell {
-				t.exec(t.input.Value())
+				t.executeAsync(t.input.Value())
 				t.input.SetValue("")
 			}
 		case tea.KeyUp:
-			if t.mode == modeShell && len(t.history) > 0 {
-				if t.historyIdx == -1 {
-					t.historyIdx = len(t.history) - 1
-				} else if t.historyIdx > 0 {
-					t.historyIdx--
-				}
-				t.input.SetValue(t.history[t.historyIdx])
-				t.input.CursorEnd()
-			}
+			t.showPrevHistoryCmd()
 		case tea.KeyDown:
-			if t.mode == modeShell {
-				if t.historyIdx >= 0 {
-					t.historyIdx++
-					if t.historyIdx >= len(t.history) {
-						t.historyIdx = -1
-						t.input.SetValue("")
-					} else {
-						t.input.SetValue(t.history[t.historyIdx])
-					}
-					t.input.CursorEnd()
-				}
-			}
+			t.showNextHistoryCmd()
 		case tea.KeyTab:
 			if t.mode == modeShell {
 				t.completePath()
@@ -445,17 +429,17 @@ func (t *TUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.WindowSizeMsg:
-		t.width = msg.Width
-		t.height = msg.Height
+		t.width = tmsg.Width
+		t.height = tmsg.Height
 		t.layoutViewport()
 		t.syncViewPort()
 	}
 
 	if t.mode == modeShell {
-		t.input, cmd = t.input.Update(msg)
+		t.input, cmd = t.input.Update(tmsg)
 		cmds = append(cmds, cmd)
 
-		t.viewport, cmd = t.viewport.Update(msg)
+		t.viewport, cmd = t.viewport.Update(tmsg)
 		cmds = append(cmds, cmd)
 	}
 
@@ -487,27 +471,40 @@ func (t *TUI) shellView() string {
 
 func (t *TUI) loginView() string {
 	var sb strings.Builder
+	sb.Grow(512)
 
 	sb.WriteString("\n")
-	sb.WriteString(titleStyle.Render("  🦔 PANGOLIN Login"))
+	sb.WriteString(titleStyle.Render("   🦔 PANGOLIN Login"))
 	sb.WriteString("\n\n")
-	if !t.checkingSession {
+
+	if !t.checkingSession && t.loginError == "" {
 		sb.WriteString(accentText.Render("  Scan the QR code with WeChat or SJTU App"))
 		sb.WriteString("\n\n")
 	}
 
-	if t.qrContent != "" {
+	switch {
+	case t.checkingSession:
+		sb.WriteString("  ")
+		sb.WriteString(mutedText.Render("📦 Checking session..."))
+		sb.WriteString("\n\n")
+
+	case t.loginError != "":
+		sb.WriteString("  ")
+		sb.WriteString(errorStyle.Render("✖ " + t.loginError)) // 错误信息动态拼接无法避免，但缩小了范围
+		sb.WriteString("\n\n")
+
+	case t.qrContent != "":
 		sb.WriteString(t.qrContent)
 		sb.WriteString("\n")
-	} else if t.checkingSession {
-		sb.WriteString("  " + mutedText.Render("📦 Checking session...") + "\n\n")
-	} else if t.loginError != "" {
-		sb.WriteString("  " + errorStyle.Render("✖ "+t.loginError) + "\n\n")
-	} else {
-		sb.WriteString("  " + mutedText.Render("⟳ Loading QR code...") + "\n\n")
+
+	default:
+		sb.WriteString("  ")
+		sb.WriteString(mutedText.Render("⟳ Loading QR code..."))
+		sb.WriteString("\n\n")
 	}
 
-	sb.WriteString("\n  " + mutedText.Render("Ctrl+C to quit"))
+	sb.WriteString("\n  ")
+	sb.WriteString(mutedText.Render("Ctrl+C to quit"))
 
 	innerW := max(t.width-12, 30)
 	minH := 12
