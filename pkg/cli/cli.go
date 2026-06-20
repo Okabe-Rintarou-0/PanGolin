@@ -17,6 +17,8 @@ type JboxClient interface {
 	List(path string) ([]FileEntry, error)
 	GetFileDownloadInfo(filePath string) (*models.FileDownloadInfo, error)
 	DownloadFile(remotePath string, localPath string, onProgress models.DownloadProgressHandler) error
+	UploadFile(localPath string, remotePath string, onProgress models.UploadProgressHandler) error
+	CreateDirectory(dirPath string) error
 }
 
 type jboxCli struct {

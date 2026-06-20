@@ -242,3 +242,62 @@ type FileDownloadInfo struct {
 }
 
 type DownloadProgressHandler = func(downloaded int64, total int64)
+
+type UploadProgressHandler = func(uploaded int64, total int64)
+
+type StartChunkUploadResult struct {
+	ConfirmKey string                          `json:"confirmKey"`
+	Domain     string                          `json:"domain"`
+	Path       string                          `json:"path"`
+	UploadID   string                          `json:"uploadId"`
+	Parts      map[string]StartChunkUploadPart `json:"parts"`
+	Expiration string                          `json:"expiration"`
+}
+
+type StartChunkUploadPart struct {
+	Headers UploadPartHeaders `json:"headers"`
+}
+
+type UploadPartHeaders struct {
+	XAmzDate          string `json:"x-amz-date"`
+	XAmzContentSha256 string `json:"x-amz-content-sha256"`
+	Authorization     string `json:"authorization"`
+}
+
+type ConfirmChunkUploadResult struct {
+	Path                     []string `json:"path"`
+	Name                     string   `json:"name"`
+	Type                     string   `json:"type"`
+	CreationTime             string   `json:"creationTime"`
+	ModificationTime         string   `json:"modificationTime"`
+	ContentType              string   `json:"contentType"`
+	Size                     string   `json:"size"`
+	ETag                     string   `json:"eTag"`
+	Crc64                    string   `json:"crc64"`
+	MetaData                 MetaData `json:"metaData"`
+	IsOverwrittened          bool     `json:"isOverwrittened"`
+	VirusAuditStatus         int64    `json:"virusAuditStatus"`
+	SensitiveWordAuditStatus int64    `json:"sensitiveWordAuditStatus"`
+	PreviewByDoc             bool     `json:"previewByDoc"`
+	PreviewByCI              bool     `json:"previewByCI"`
+	PreviewAsIcon            bool     `json:"previewAsIcon"`
+	FileType                 string   `json:"fileType"`
+}
+
+type ChunkUploadInfo struct {
+	Confirmed                  bool              `json:"confirmed"`
+	Path                       []string          `json:"path"`
+	Type                       string            `json:"type"`
+	CreationTime               string            `json:"creationTime"`
+	ConflictResolutionStrategy string            `json:"conflictResolutionStrategy"`
+	Force                      bool              `json:"force"`
+	UploadID                   string            `json:"uploadId"`
+	Parts                      []ChunkUploadPart `json:"parts"`
+}
+
+type ChunkUploadPart struct {
+	PartNumber   int64  `json:"PartNumber"`
+	Size         int64  `json:"Size"`
+	ETag         string `json:"ETag"`
+	LastModified string `json:"LastModified"`
+}
