@@ -4,13 +4,24 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"log"
+	"net/url"
 	"os"
 	"pangolin/pkg/cli/models"
 	"pangolin/pkg/utils"
 	"strings"
+	"time"
 
 	"github.com/spf13/cast"
 )
+
+func encodePath(segments ...string) string {
+	encoded := make([]string, len(segments))
+	for i, s := range segments {
+		encoded[i] = url.PathEscape(s)
+	}
+	return strings.Join(encoded, "/")
+}
 
 func (c *jboxCli) GetDirectoryInfo(dirPath string,
 	pagination *models.PaginationOption,
@@ -21,7 +32,7 @@ func (c *jboxCli) GetDirectoryInfo(dirPath string,
 		return nil, fmt.Errorf("获取目录'%s'信息失败，未登录！", dirPath)
 	}
 
-	url := fmt.Sprintf("/api/v1/directory/%s/%s/%s", c.spaceInfo.LibraryID, c.spaceInfo.SpaceID, dirPath)
+	url := fmt.Sprintf("/api/v1/directory/%s/%s/%s", c.spaceInfo.LibraryID, c.spaceInfo.SpaceID, encodePath(dirPath))
 	query := map[string]string{
 		"access_token": c.spaceInfo.AccessToken,
 	}
@@ -80,7 +91,9 @@ func (c *jboxCli) GetFileDownloadInfo(filePath string) (*models.FileDownloadInfo
 	}
 
 	cleanPath := strings.TrimLeft(filePath, "/")
-	url := fmt.Sprintf("/api/v1/file/%s/%s/%s", c.spaceInfo.LibraryID, c.spaceInfo.SpaceID, cleanPath)
+	url := fmt.Sprintf("/api/v1/file/%s/%s/%s", c.spaceInfo.LibraryID, c.spaceInfo.SpaceID, encodePath(cleanPath))
+	log.Printf("url: %s", cleanPath)
+
 	query := map[string]string{
 		"info":         "",
 		"access_token": c.spaceInfo.AccessToken,
@@ -154,7 +167,7 @@ func (c *jboxCli) CreateDirectory(dirPath string) error {
 	}
 
 	cleanPath := strings.TrimLeft(dirPath, "/")
-	url := c.baseUrl + fmt.Sprintf("/api/v1/directory/%s/%s/%s", c.spaceInfo.LibraryID, c.spaceInfo.SpaceID, cleanPath)
+	url := c.baseUrl + fmt.Sprintf("/api/v1/directory/%s/%s/%s", c.spaceInfo.LibraryID, c.spaceInfo.SpaceID, encodePath(cleanPath))
 
 	resp, err := c.putRequest(url, nil, map[string]string{
 		"conflict_resolution_strategy": "ask",
@@ -189,7 +202,7 @@ func (c *jboxCli) StartChunkUpload(path string, chunkCount int64) (*models.Start
 	}
 
 	cleanPath := strings.TrimLeft(path, "/")
-	url := c.baseUrl + fmt.Sprintf("/api/v1/file/%s/%s/%s", c.spaceInfo.LibraryID, c.spaceInfo.SpaceID, cleanPath)
+	url := c.baseUrl + fmt.Sprintf("/api/v1/file/%s/%s/%s", c.spaceInfo.LibraryID, c.spaceInfo.SpaceID, encodePath(cleanPath))
 	if chunkCount > 50 {
 		chunkCount = 50
 	}
@@ -338,6 +351,100 @@ func (c *jboxCli) UploadFile(localPath string, remotePath string, onProgress mod
 
 	_, err = c.ConfirmChunkUpload(ctx.ConfirmKey)
 	return err
+}
+
+func (c *jboxCli) CopyFile(srcPath, destPath string) error {
+	if c.spaceInfo == nil {
+		return fmt.Errorf("复制文件失败，未登录！")
+	}
+
+	cleanDest := strings.TrimLeft(destPath, "/")
+	url := c.baseUrl + fmt.Sprintf("/api/v1/file/%s/%s/%s", c.spaceInfo.LibraryID, c.spaceInfo.SpaceID, encodePath(cleanDest))
+
+	cleanSrc := strings.TrimLeft(srcPath, "/")
+	body := map[string]interface{}{
+		"from": cleanSrc,
+	}
+
+	resp, err := c.postJson(url, map[string]string{
+		"copy":                         "null",
+		"conflict_resolution_strategy": "overwrite",
+		"access_token":                 c.spaceInfo.AccessToken,
+	}, body)
+	if err != nil {
+		return err
+	}
+
+	if !utils.IsSuccessStatusCode(resp.StatusCode) {
+		errMsg := models.ErrorMessage{}
+		if unmarshalErr := utils.UnmarshalJson(resp, &errMsg); unmarshalErr == nil && errMsg.Message != "" {
+			return fmt.Errorf("服务器错误: %s", errMsg.Message)
+		}
+		return fmt.Errorf("服务器响应状态码: %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
+func (c *jboxCli) CopyDirectory(srcPath, destPath string) error {
+	if c.spaceInfo == nil {
+		return fmt.Errorf("复制目录失败，未登录！")
+	}
+
+	cleanDest := strings.TrimLeft(destPath, "/")
+	url := c.baseUrl + fmt.Sprintf("/api/v1/directory/%s/%s/%s", c.spaceInfo.LibraryID, c.spaceInfo.SpaceID, encodePath(cleanDest))
+
+	cleanSrc := strings.TrimLeft(srcPath, "/")
+	body := map[string]interface{}{
+		"from": cleanSrc,
+	}
+
+	resp, err := c.postJson(url, map[string]string{
+		"conflict_resolution_strategy": "overwrite",
+		"access_token":                 c.spaceInfo.AccessToken,
+	}, body)
+	if err != nil {
+		return err
+	}
+
+	if !utils.IsSuccessStatusCode(resp.StatusCode) {
+		errMsg := models.ErrorMessage{}
+		if unmarshalErr := utils.UnmarshalJson(resp, &errMsg); unmarshalErr == nil && errMsg.Message != "" {
+			return fmt.Errorf("服务器错误: %s", errMsg.Message)
+		}
+		return fmt.Errorf("服务器响应状态码: %d", resp.StatusCode)
+	}
+
+	taskResult := models.DirectoryCopyResult{}
+	err = utils.UnmarshalJson[models.DirectoryCopyResult](resp, &taskResult)
+	if err != nil {
+		return err
+	}
+
+	// Poll task until complete
+	taskURL := fmt.Sprintf("/api/v1/task/%s/%s/%d", c.spaceInfo.LibraryID, c.spaceInfo.SpaceID, taskResult.TaskID)
+	for {
+		time.Sleep(1 * time.Second)
+
+		pollResp, err := c.getRequest(c.baseUrl+taskURL, map[string]string{
+			"access_token": c.spaceInfo.AccessToken,
+		})
+		if err != nil {
+			return err
+		}
+
+		taskStatus := []models.TaskStatusResult{}
+		err = utils.UnmarshalJson[[]models.TaskStatusResult](pollResp, &taskStatus)
+		if err != nil {
+			return err
+		}
+
+		if len(taskStatus) > 0 && taskStatus[0].Status == 204 {
+			break
+		}
+	}
+
+	return nil
 }
 
 type bufferedReadCloser struct {

@@ -18,6 +18,8 @@ type JboxClient interface {
 	GetFileDownloadInfo(filePath string) (*models.FileDownloadInfo, error)
 	DownloadFile(remotePath string, localPath string, onProgress models.DownloadProgressHandler) error
 	UploadFile(localPath string, remotePath string, onProgress models.UploadProgressHandler) error
+	CopyFile(srcPath string, destPath string) error
+	CopyDirectory(srcPath string, destPath string) error
 	CreateDirectory(dirPath string) error
 }
 

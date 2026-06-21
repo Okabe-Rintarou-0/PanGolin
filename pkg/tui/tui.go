@@ -196,14 +196,17 @@ func (t *TUI) completePath() {
 		return
 	}
 
-	hasTrailingSpace := strings.HasSuffix(inputVal, " ")
-	fields := strings.Fields(inputVal)
+	fields := parser.SplitArgs(inputVal)
 	if len(fields) == 0 {
 		return
 	}
 	cmdName := fields[0]
 	cmdArgs := fields[1:]
 	command := t.parser.ParseSingleCmd(t.nextLineNo(), cmdName, cmdArgs...)
+
+	if command == nil {
+		return
+	}
 
 	hints := command.Hint(cmdArgs)
 	if len(hints) == 0 {
@@ -215,9 +218,9 @@ func (t *TUI) completePath() {
 
 	var prefix strings.Builder
 	prefix.WriteString(cmdName)
-	lastArgIdx := len(cmdArgs)
-	if !hasTrailingSpace && len(cmdArgs) > 0 {
-		lastArgIdx = len(cmdArgs) - 1
+	lastArgIdx := len(cmdArgs) - 1
+	if lastArgIdx < 0 {
+		lastArgIdx = 0
 	}
 	for i := 0; i < lastArgIdx; i++ {
 		prefix.WriteString(" ")
@@ -225,21 +228,29 @@ func (t *TUI) completePath() {
 	}
 	prefix.WriteString(" ")
 
+	currentPartial := ""
+	if len(cmdArgs) > 0 {
+		currentPartial = cmdArgs[len(cmdArgs)-1]
+	}
+
 	if len(hints) == 1 {
-		prefix.WriteString(hints[0].RealValue())
+		val := hints[0].RealValue()
+		if needsQuote(val) {
+			val = addQuotes(val)
+		}
+		prefix.WriteString(val)
 		t.input.SetValue(prefix.String())
 		t.input.CursorEnd()
 		return
 	}
 
-	currentPartial := ""
-	if !hasTrailingSpace && len(cmdArgs) > 0 {
-		currentPartial = cmdArgs[len(cmdArgs)-1]
-	}
-
 	commonPrefix := longestCommonPrefix(hints)
 	if commonPrefix != currentPartial && commonPrefix != "" {
-		prefix.WriteString(commonPrefix)
+		val := commonPrefix
+		if needsQuote(val) {
+			val = addQuotes(val)
+		}
+		prefix.WriteString(val)
 		t.input.SetValue(prefix.String())
 		t.input.CursorEnd()
 		return
@@ -256,6 +267,19 @@ func (t *TUI) completePath() {
 
 	t.syncViewPort()
 	t.viewport.GotoBottom()
+}
+
+func needsQuote(val string) bool {
+	return strings.ContainsAny(val, " ")
+}
+
+func addQuotes(val string) string {
+	for _, p := range []string{"cloud:", "host:"} {
+		if after, ok := strings.CutPrefix(val, p); ok {
+			return p + "\"" + after + "\""
+		}
+	}
+	return "\"" + val + "\""
 }
 
 func longestCommonPrefix(hints models.HintEntries) string {
@@ -385,8 +409,6 @@ func (t *TUI) Update(tmsg tea.Msg) (tea.Model, tea.Cmd) {
 		current := tmsg.Current
 		err := tmsg.Err
 		pbar := tmsg.Pbar
-		log.Printf("progress msg, idx: %d/%d, curr: %d, total: %d", lineIdx, len(t.lines), current, total)
-		log.Printf("progress msg, %p", tmsg.Pbar)
 		if lineIdx >= len(t.lines) {
 			needed := lineIdx + 1 - len(t.lines)
 			t.lines = append(t.lines, make([]string, needed)...)
@@ -402,7 +424,6 @@ func (t *TUI) Update(tmsg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				bar = "Done"
 			}
-			log.Printf("bar: %s", bar)
 			t.lines[lineIdx] = bar
 			t.syncViewPort()
 			t.viewport.GotoBottom()

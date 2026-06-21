@@ -245,6 +245,19 @@ type DownloadProgressHandler = func(downloaded int64, total int64)
 
 type UploadProgressHandler = func(uploaded int64, total int64)
 
+type CopyFileResult struct {
+	Path []string `json:"path"`
+}
+
+type DirectoryCopyResult struct {
+	TaskID int64 `json:"taskId"`
+}
+
+type TaskStatusResult struct {
+	TaskID int64 `json:"taskId"`
+	Status int   `json:"status"`
+}
+
 type StartChunkUploadResult struct {
 	ConfirmKey string                          `json:"confirmKey"`
 	Domain     string                          `json:"domain"`

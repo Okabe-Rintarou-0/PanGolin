@@ -9,7 +9,7 @@ type PathManager interface {
 
 func NewPathManager() PathManager {
 	return &pathManager{
-		currPath: NewPath(CloudDisk, "/"),
+		currPath: NewPath(CloudDisk, "/", true),
 	}
 }
 
@@ -33,6 +33,6 @@ func (m *pathManager) CurrentPath() *Path {
  		newPath = stdpath.Join(curr, target)
 	}
 
-	m.currPath = NewPath(m.currPath.Device(), newPath)
+	m.currPath = NewPath(m.currPath.Device(), newPath, true)
  	return nil
  }

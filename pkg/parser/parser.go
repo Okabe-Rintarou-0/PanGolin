@@ -6,9 +6,60 @@ import (
 	"pangolin/pkg/path"
 	"pangolin/pkg/tui/handle"
 	"strings"
+	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+func SplitArgs(input string) []string {
+	var args []string
+	var cur strings.Builder
+	quote := byte(0)
+	escape := false
+	trailingSpace := false
+
+	for _, r := range input {
+		trailingSpace = false
+		if escape {
+			cur.WriteRune(r)
+			escape = false
+			continue
+		}
+		if r == '\\' {
+			escape = true
+			continue
+		}
+		if quote != 0 {
+			if byte(r) == quote {
+				quote = 0
+			} else {
+				cur.WriteRune(r)
+			}
+			continue
+		}
+		if r == '\'' || r == '"' {
+			quote = byte(r)
+			continue
+		}
+		if unicode.IsSpace(r) {
+			if cur.Len() > 0 {
+				args = append(args, cur.String())
+				cur.Reset()
+			}
+			trailingSpace = true
+			continue
+		}
+		cur.WriteRune(r)
+	}
+	if cur.Len() > 0 {
+		args = append(args, cur.String())
+		trailingSpace = false
+	}
+	if trailingSpace && len(args) > 0 {
+		args = append(args, "")
+	}
+	return args
+}
 
 // Parser 定义了解析终端输入的接口
 type Parser interface {
@@ -61,7 +112,7 @@ func (p *PipeParser) Parse(nextLineNo int, input string) cmd.Command {
 
 	for _, part := range parts {
 		// 自动过滤并提取命令和参数
-		args := strings.Fields(strings.TrimSpace(part))
+		args := SplitArgs(strings.TrimSpace(part))
 		if len(args) == 0 {
 			continue
 		}

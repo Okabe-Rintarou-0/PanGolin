@@ -4,10 +4,15 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"pangolin/pkg/cmd/models"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 var (
 	devicePrefixes = []string{"cloud:", "host:"}
+	dirStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("#6EE7B7"))
 )
 
 type DeviceType = string
@@ -18,12 +23,14 @@ const (
 )
 
 type CloudDiskPath struct {
-	path string
+	path  string
+	isDir bool
 }
 
-func NewCloudDiskPath(path string) *CloudDiskPath {
+func NewCloudDiskPath(path string, isDir bool) *CloudDiskPath {
 	return &CloudDiskPath{
-		path,
+		path:  path,
+		isDir: isDir,
 	}
 }
 
@@ -31,8 +38,26 @@ func (p *CloudDiskPath) Path() string {
 	return p.path
 }
 
+func (p *CloudDiskPath) Compare(other models.HintEntry) int {
+	o, ok := other.(*CloudDiskPath)
+	if !ok {
+		return strings.Compare(p.RealValue(), other.RealValue())
+	}
+	if p.isDir != o.isDir {
+		if p.isDir {
+			return -1
+		}
+		return 1
+	}
+	return strings.Compare(p.RealValue(), other.RealValue())
+}
+
 func (p *CloudDiskPath) DisplayValue() string {
-	return filepath.Base(p.path)
+	name := filepath.Base(p.path)
+	if p.isDir {
+		return dirStyle.Render(name + "/")
+	}
+	return name
 }
 
 func (p *CloudDiskPath) RealValue() string {
@@ -42,11 +67,14 @@ func (p *CloudDiskPath) RealValue() string {
 type Path struct {
 	device string
 	path   string
+	isDir  bool
 }
 
-func NewPath(device string, path string) *Path {
+func NewPath(device string, path string, isDir bool) *Path {
 	return &Path{
-		device, path,
+		device: device,
+		path:   path,
+		isDir:  isDir,
 	}
 }
 
@@ -62,12 +90,30 @@ func (p *Path) Path() string {
 	return p.path
 }
 
+func (p *Path) Compare(other models.HintEntry) int {
+	o, ok := other.(*Path)
+	if !ok {
+		return strings.Compare(p.RealValue(), other.RealValue())
+	}
+	if p.isDir != o.isDir {
+		if p.isDir {
+			return -1
+		}
+		return 1
+	}
+	return strings.Compare(p.RealValue(), other.RealValue())
+}
+
 func (p *Path) FullPath() string {
 	return fmt.Sprintf("%s:%s", p.device, p.path)
 }
 
 func (p *Path) DisplayValue() string {
-	return filepath.Base(p.path)
+	name := filepath.Base(p.path)
+	if p.isDir {
+		return dirStyle.Render(name + "/")
+	}
+	return name
 }
 func (p *Path) RealValue() string {
 	return p.FullPath()

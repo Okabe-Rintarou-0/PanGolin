@@ -97,7 +97,7 @@ func (l *LsCommand) Hint(args []string) []models.HintEntry {
 		var dirs models.HintEntries
 		for _, e := range entries {
 			if e.IsDir {
-				dirs = append(dirs, path.NewCloudDiskPath(stdpath.Join(full, e.Name)+"/"))
+				dirs = append(dirs, path.NewCloudDiskPath(stdpath.Join(full, e.Name)+"/", true))
 			}
 		}
 		sort.Sort(dirs)
@@ -118,7 +118,7 @@ func (l *LsCommand) Hint(args []string) []models.HintEntry {
 	var dirs models.HintEntries
 	for _, e := range entries {
 		if e.IsDir && strings.HasPrefix(e.Name, prefix) {
-			dirs = append(dirs, path.NewCloudDiskPath(stdpath.Join(parent, e.Name)+"/"))
+			dirs = append(dirs, path.NewCloudDiskPath(stdpath.Join(parent, e.Name)+"/", true))
 		}
 	}
 	sort.Sort(dirs)

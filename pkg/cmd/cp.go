@@ -63,15 +63,27 @@ func (c *CpCommand) Execute(in io.Reader, out io.Writer) error {
 	}
 
 	srcDevice, src := path.ParseDevicePath(c.srcPath, path.CloudDisk)
+	destDefault := path.Host
 	if srcDevice == path.Host {
-		return c.executeUpload(src, out)
+		destDefault = path.CloudDisk
 	}
-	return c.executeDownload(src, out)
+	destDevice, dest := path.ParseDevicePath(c.destPath, destDefault)
+
+	switch {
+	case srcDevice == path.CloudDisk && destDevice == path.Host:
+		return c.executeDownload(src, dest, out)
+	case srcDevice == path.Host && destDevice == path.CloudDisk:
+		return c.executeUpload(src, dest, out)
+	case srcDevice == path.CloudDisk && destDevice == path.CloudDisk:
+		return c.executeCloudCopy(src, dest, out)
+	case srcDevice == path.Host && destDevice == path.Host:
+		return c.executeHostCopy(src, dest, out)
+	default:
+		return fmt.Errorf("不支持从 %s 复制到 %s", srcDevice, destDevice)
+	}
 }
 
-func (c *CpCommand) executeDownload(src string, out io.Writer) error {
-	_, dest := path.ParseDevicePath(c.destPath, path.Host)
-
+func (c *CpCommand) executeDownload(src, dest string, out io.Writer) error {
 	if !strings.HasPrefix(src, "/") {
 		src = stdpath.Join(c.pathMgr.CurrentPath().Path(), src)
 	}
@@ -98,9 +110,7 @@ func (c *CpCommand) executeDownload(src string, out io.Writer) error {
 	return c.copyFile(src, dest, out)
 }
 
-func (c *CpCommand) executeUpload(src string, out io.Writer) error {
-	_, dest := path.ParseDevicePath(c.destPath, path.CloudDisk)
-
+func (c *CpCommand) executeUpload(src, dest string, out io.Writer) error {
 	if !strings.HasPrefix(dest, "/") {
 		dest = stdpath.Join(c.pathMgr.CurrentPath().Path(), dest)
 	}
@@ -129,8 +139,82 @@ func (c *CpCommand) executeUpload(src string, out io.Writer) error {
 	return c.uploadFile(src, dest, out)
 }
 
+func isSubDir(parent, child string) bool {
+	if parent == child {
+		return true
+	}
+	parent = strings.TrimRight(parent, "/") + "/"
+	return strings.HasPrefix(child, parent)
+}
+
+func (c *CpCommand) executeCloudCopy(src, dest string, out io.Writer) error {
+	if !strings.HasPrefix(src, "/") {
+		src = stdpath.Join(c.pathMgr.CurrentPath().Path(), src)
+	}
+	if !strings.HasPrefix(dest, "/") {
+		dest = stdpath.Join(c.pathMgr.CurrentPath().Path(), dest)
+	}
+
+	if dest == "" || strings.HasSuffix(dest, "/") {
+		dest = stdpath.Join(dest, stdpath.Base(src))
+	} else if entries, err := c.cli.List(dest); err == nil {
+		_ = entries
+		if stdpath.Base(src) != stdpath.Base(dest) {
+			dest = stdpath.Join(dest, stdpath.Base(src))
+		}
+	}
+
+	if isSubDir(src, dest) {
+		return fmt.Errorf("不能将目录复制到自身内部")
+	}
+
+	if entries, listErr := c.cli.List(src); listErr == nil {
+		if !c.recursive {
+			return fmt.Errorf("%s 是一个目录，请使用 cp -r 来复制目录", stdpath.Base(src))
+		}
+		return c.cloudCopyDirBFS(src, dest, entries, out)
+	}
+
+	if c.recursive {
+		return fmt.Errorf("%s 不是一个目录", stdpath.Base(src))
+	}
+	return c.cloudCopyFile(src, dest, out)
+}
+
+func (c *CpCommand) executeHostCopy(src, dest string, out io.Writer) error {
+	// Resolve relative paths for dest only — src is used as-is
+	if dest == "" || strings.HasSuffix(dest, "/") || strings.HasSuffix(dest, "\\") {
+		dest = filepath.Join(dest, filepath.Base(src))
+	} else if info, err := os.Stat(dest); err == nil && info.IsDir() {
+		dest = filepath.Join(dest, filepath.Base(src))
+	}
+
+	srcInfo, err := os.Stat(src)
+	if err != nil {
+		return fmt.Errorf("无法访问本地路径'%s': %w", src, err)
+	}
+
+	if srcInfo.IsDir() {
+		if !c.recursive {
+			return fmt.Errorf("%s 是一个目录，请使用 cp -r 来复制目录", src)
+		}
+		return c.hostCopyDirBFS(src, dest, out)
+	}
+	if c.recursive {
+		return fmt.Errorf("%s 不是一个目录", src)
+	}
+	return c.hostCopyFile(src, dest, out)
+}
+
 func (c *CpCommand) copyFile(src, dest string, out io.Writer) error {
-	err := c.cli.DownloadFile(src, dest, nil)
+	if c.pbarHandle != nil {
+		c.pbarHandle.Create()
+	}
+	err := c.cli.DownloadFile(src, dest, func(downloaded, total int64) {
+		if c.pbarHandle != nil {
+			c.pbarHandle.Set(int(downloaded), int(total))
+		}
+	})
 	if err != nil {
 		return err
 	}
@@ -191,7 +275,14 @@ func (c *CpCommand) copyDirBFS(rootSrc, rootDest string, rootEntries []cli.FileE
 }
 
 func (c *CpCommand) uploadFile(src, dest string, out io.Writer) error {
-	err := c.cli.UploadFile(src, dest, nil)
+	if c.pbarHandle != nil {
+		c.pbarHandle.Create()
+	}
+	err := c.cli.UploadFile(src, dest, func(uploaded, total int64) {
+		if c.pbarHandle != nil {
+			c.pbarHandle.Set(int(uploaded), int(total))
+		}
+	})
 	if err != nil {
 		return err
 	}
@@ -284,10 +375,143 @@ func (c *CpCommand) uploadFiles(files []uploadTask, _ io.Writer) error {
 	return firstErr
 }
 
+func (c *CpCommand) cloudCopyFile(src, dest string, out io.Writer) error {
+	err := c.cli.CopyFile(src, dest)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "%s -> %s\n", src, dest)
+	return nil
+}
+
+func (c *CpCommand) cloudCopyDirBFS(rootSrc, rootDest string, rootEntries []cli.FileEntry, out io.Writer) error {
+	// Use server-side async directory copy API
+	err := c.cli.CopyDirectory(rootSrc, rootDest)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "%s -> %s\n", rootSrc, rootDest)
+	return nil
+}
+
+func (c *CpCommand) hostCopyFile(src, dest string, out io.Writer) error {
+	err := c.copyLocalFile(src, dest)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "%s -> %s\n", src, dest)
+	return nil
+}
+
+func (c *CpCommand) copyLocalFile(src, dest string) error {
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer srcFile.Close()
+
+	destFile, err := os.Create(dest)
+	if err != nil {
+		return err
+	}
+	defer destFile.Close()
+
+	_, err = io.Copy(destFile, srcFile)
+	if err != nil {
+		return err
+	}
+
+	fi, err := os.Stat(src)
+	if err == nil {
+		os.Chmod(dest, fi.Mode())
+	}
+	return nil
+}
+
+func (c *CpCommand) hostCopyDirBFS(rootSrc, rootDest string, out io.Writer) error {
+	os.MkdirAll(rootDest, 0755)
+
+	var files []uploadTask
+	queue := []uploadTask{{rootSrc, rootDest}}
+
+	for len(queue) > 0 {
+		item := queue[0]
+		queue = queue[1:]
+
+		entries, err := os.ReadDir(item.src)
+		if err != nil {
+			return err
+		}
+
+		for _, e := range entries {
+			subSrc := filepath.Join(item.src, e.Name())
+			subDest := filepath.Join(item.dest, e.Name())
+			if e.IsDir() {
+				os.MkdirAll(subDest, 0755)
+				queue = append(queue, uploadTask{subSrc, subDest})
+			} else {
+				files = append(files, uploadTask{subSrc, subDest})
+			}
+		}
+	}
+
+	if len(files) == 0 {
+		return nil
+	}
+	return c.hostCopyFiles(files, out)
+}
+
+func (c *CpCommand) hostCopyFiles(files []uploadTask, _ io.Writer) error {
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, maxConcurrency)
+
+	var mu sync.Mutex
+	completed := 0
+	total := len(files)
+
+	var once sync.Once
+	var firstErr error
+
+	if c.pbarHandle != nil {
+		c.pbarHandle.Create()
+	}
+	for _, f := range files {
+		wg.Add(1)
+		go func(f uploadTask) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			err := retry(maxRetries, func() error {
+				return c.copyLocalFile(f.src, f.dest)
+			})
+			if err != nil {
+				once.Do(func() { firstErr = fmt.Errorf("%s 复制失败: %w", f.src, err) })
+			}
+
+			mu.Lock()
+			completed++
+			if c.onProgress != nil {
+				c.onProgress(completed, total)
+			}
+			if c.pbarHandle != nil {
+				c.pbarHandle.Set(completed, total)
+			}
+			mu.Unlock()
+		}(f)
+	}
+
+	wg.Wait()
+	if firstErr != nil && c.pbarHandle != nil {
+		c.pbarHandle.SetError(firstErr)
+	}
+	return firstErr
+}
+
 func (c *CpCommand) Name() string { return "cp" }
 func (c *CpCommand) Help() string { return "Copy file/dir between cloud and local host" }
 func (c *CpCommand) Examples() string {
-	return "cp file.txt ~/Desktop/\ncp host:file.txt cloud:dir/\ncp -r mydir ./backup/\ncp -r host:mydir cloud:mydir/"
+	return "cp file.txt ~/Desktop/\ncp host:file.txt cloud:dir/\ncp -r mydir ./backup/\ncp -r host:mydir cloud:mydir/\ncp cloud:file.txt cloud:backup/file.txt\ncp host:file.txt host:backup/"
 }
 
 func (c *CpCommand) downloadFiles(files []fileTask, _ io.Writer) error {
@@ -360,7 +584,7 @@ func (c *CpCommand) Hint(args []string) []models.HintEntry {
 	device, p, found := strings.Cut(lastArg, ":")
 	if !found {
 		if deviceType, ok := c.hintDevice(device); ok {
-			return []models.HintEntry{path.NewPath(deviceType, "")}
+			return []models.HintEntry{path.NewPath(deviceType, "", false)}
 		}
 	} else {
 		if device == path.CloudDisk {
@@ -400,7 +624,7 @@ func hintCloudPath(partial, currPath string, cli cli.JboxClient) []models.HintEn
 			if e.IsDir {
 				name += "/"
 			}
-			hints = append(hints, path.NewPath(path.CloudDisk, stdpath.Join(full, name)))
+			hints = append(hints, path.NewPath(path.CloudDisk, stdpath.Join(full, name), e.IsDir))
 		}
 		sort.Sort(hints)
 		return hints
@@ -424,7 +648,7 @@ func hintCloudPath(partial, currPath string, cli cli.JboxClient) []models.HintEn
 			if e.IsDir {
 				name += "/"
 			}
-			hints = append(hints, path.NewPath(path.CloudDisk, stdpath.Join(parent, name)))
+			hints = append(hints, path.NewPath(path.CloudDisk, stdpath.Join(parent, name), e.IsDir))
 		}
 	}
 	sort.Sort(hints)
@@ -444,10 +668,11 @@ func listLocalDir(partial string) []models.HintEntry {
 		var hints models.HintEntries
 		for _, e := range entries {
 			name := e.Name()
-			if e.IsDir() {
+			isdir := e.IsDir()
+			if isdir {
 				name += string(filepath.Separator)
 			}
-			hints = append(hints, path.NewPath(path.Host, name))
+			hints = append(hints, path.NewPath(path.Host, name, isdir))
 		}
 		sort.Sort(hints)
 		return hints
@@ -461,10 +686,11 @@ func listLocalDir(partial string) []models.HintEntry {
 		var hints models.HintEntries
 		for _, e := range entries {
 			name := partial + e.Name()
-			if e.IsDir() {
+			isdir := e.IsDir()
+			if isdir {
 				name += string(filepath.Separator)
 			}
-			hints = append(hints, path.NewPath(path.Host, name))
+			hints = append(hints, path.NewPath(path.Host, name, isdir))
 		}
 		sort.Sort(hints)
 		return hints
@@ -486,10 +712,11 @@ func listLocalDir(partial string) []models.HintEntry {
 		if parent != "." {
 			name = filepath.Join(parent, name)
 		}
-		if e.IsDir() {
+		isdir := e.IsDir()
+		if isdir {
 			name += string(filepath.Separator)
 		}
-		hints = append(hints, path.NewPath(path.Host, name))
+		hints = append(hints, path.NewPath(path.Host, name, isdir))
 	}
 	sort.Sort(hints)
 	return hints
